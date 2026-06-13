@@ -98,6 +98,8 @@
   .k-steal .shot-box{border-color:var(--gold)} .k-steal .shot-kind,.k-steal .shot-pts{color:var(--gold)}
   .k-special .shot-box{border-color:#a855f7} .k-special .shot-kind,.k-special .shot-pts{color:#c084fc}
   .k-decoy .shot-box{border-color:var(--muted)} .k-decoy .shot-kind,.k-decoy .shot-pts{color:var(--muted)}
+  .k-scratch .shot-box{border-color:var(--danger)} .k-scratch .shot-kind,.k-scratch .shot-pts{color:var(--danger)}
+  .ball.cue{background:radial-gradient(circle at 38% 32%,#ffffff,#d8d8d8 75%,#bdbdbd)}
   .center{text-align:center}
   .big{font-size:20px;font-weight:700}
   .reveal{padding:12px;border-radius:10px;background:var(--card2);margin:12px 0;text-align:center;min-height:24px}
@@ -124,6 +126,8 @@
   .logline.left{border-left-color:var(--gold);color:#f3e2a6}
   .logline.lead{font-weight:700;background:rgba(234,179,8,.12)}
   .logline.miss{border-left-color:var(--muted);color:var(--muted)}
+  .logline.foul{border-left-color:var(--danger);color:#f7a7a7}
+  .foul-btn{color:#f7a7a7;border-color:rgba(239,68,68,.4)}
   .seg{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
   .seg button{flex:1;min-width:60px}
   .seg button.on{background:var(--accent2);color:#fff}
@@ -303,6 +307,7 @@ function logHTML(log){
     let cls="shoot";
     if(isHeader(l)) cls="left lead";
     else if(isLeft(l)) cls="left";
+    else if(l.includes('ลูกขาว')) cls="foul";
     else if(l.includes('ยิงพลาด')) cls="miss";
     return `<div class="logline ${cls}">${esc(l)}</div>`;
   }).join("")).join("");
@@ -362,7 +367,8 @@ const SFX={
     [2093,2637,3136].forEach((f,i)=>tone(f,0.55+i*0.05,0.25,{vol:0.18})); // ประกายระยิบ
   },
   end(){ [523,659,784,1047].forEach((f,i)=>tone(f,i*0.12,0.45,{type:"triangle",vol:0.4})); tone(1319,0.48,0.6,{type:"triangle",vol:0.42}); }, // จบตา: แฟนแฟร์
-  undo(){ tone(440,0,0.12,{type:"square",vol:0.22,to:220}); }                         // ย้อนกลับ
+  undo(){ tone(440,0,0.12,{type:"square",vol:0.22,to:220}); },                        // ย้อนกลับ
+  scratch(){ tone(330,0,0.18,{type:"sawtooth",vol:0.32,to:160}); tone(220,0.16,0.3,{type:"sawtooth",vol:0.34,to:90}); } // ลูกขาว: เสียงเสียแต้ม
 };
 function sfx(name){
   if(_muted) return;
@@ -711,7 +717,7 @@ function buildOwners(){
 function turnState(){
   let sh=S.firstShooter, streak=0;
   for(const a of S.actions){
-    if(a.miss){ sh=(sh+1)%S.P; streak=0; }
+    if(a.miss||a.scratch){ sh=(sh+1)%S.P; streak=0; }
     else {
       streak++;
       if(S.contMode==="limited" && streak>=S.contLimit){ sh=(sh+1)%S.P; streak=0; }
@@ -784,9 +790,10 @@ function renderShoot(){
     grid.appendChild(bb);
   }
 
-  // miss / skip turn
+  // miss / skip turn + ลูกขาว (scratch)
   const skip=el(`<div class="card">
     <button class="btn-ghost" id="skip" style="width:100%">⏭ ยิงพลาด / ข้ามไปคนถัดไป</button>
+    <button class="btn-ghost foul-btn" id="scratch" style="width:100%;margin-top:8px">⚪ ลูกขาวลง / ตกโต๊ะ — เสีย 1 แต้มให้ทุกคน</button>
   </div>`);
   A.appendChild(skip);
   skip.querySelector("#skip").addEventListener("click",()=>{
@@ -794,6 +801,16 @@ function renderShoot(){
     S.log.push(`[${S.players[sh].name}] ยิงพลาด`);
     S._lastReveal=`${S.players[sh].name} ยิงพลาด → เปลี่ยนคน`;
     renderShoot();
+  });
+  skip.querySelector("#scratch").addEventListener("click",()=>{
+    const shooterName=S.players[sh].name;
+    sfx("scratch");
+    const msg=applyScratch(sh);
+    S.actions.push({scratch:true, by:sh});
+    S.log.push(`[${shooterName}] ${msg}`);
+    S._lastReveal=`${shooterName} ${msg} → เปลี่ยนคน`;
+    renderShoot();
+    showShotPopup({kind:"scratch", shooterName, passed:true});
   });
 
   // scoreboard
@@ -837,22 +854,35 @@ function applyPotScore(n, sh){
   return msg;
 }
 
+/* ลูกขาวลงหลุม / ตกออกนอกโต๊ะ: ผู้ยิงเสีย 1 แต้มให้ทุกคน (คนละ 1) แล้วเปลี่ยนคน */
+function applyScratch(sh){
+  S.players.forEach((p,j)=>{ if(j!==sh) transfer(j,sh,1); });
+  return `⚪ ลูกขาวลง/ตกโต๊ะ → เสีย 1 แต้มให้ทุกคน`;
+}
+
 /* popup เด้งทุกครั้งที่ยิงลูก -> เห็นชัดว่าลูกของใคร / หลอก / พิเศษ */
 function showShotPopup(d, after){
-  const def=BALL[d.n];
-  const style=def.t==="st"?"":`background:${def.c}`;
-  const inner=(def.t==="st"?`<div class="band" style="background:${def.c}"></div>`:"")
-    +`<div class="shine"></div><div class="num">${d.n}</div>`;
   const K={
     own:{cls:"k-own", icon:"✅", label:"เลขของตัวเอง", pts:"ได้ 1 แต้มจากทุกคน"},
     steal:{cls:"k-steal", icon:"🎯", label:`เลขของ ${esc(d.ownerName)}`, pts:`ได้ 2 แต้มจาก ${esc(d.ownerName)}`},
     special:{cls:"k-special", icon:"⭐", label:"ลูกพิเศษ", pts:"ได้ 1 แต้มจากทุกคน"},
-    decoy:{cls:"k-decoy", icon:"🫥", label:"ลูกหลอก", pts:"ไม่มีแต้ม"}
+    decoy:{cls:"k-decoy", icon:"🫥", label:"ลูกหลอก", pts:"ไม่มีแต้ม"},
+    scratch:{cls:"k-scratch", icon:"⚪", label:"ลูกขาวลง / ตกโต๊ะ", pts:"เสีย 1 แต้มให้ทุกคน"}
   }[d.kind];
-  const ballCls="ball big-ball"+(def.t==="st"?" stripe":"")+(d.kind==="special"?" special":"");
+  let ballHTML;
+  if(d.kind==="scratch"){
+    ballHTML=`<div class="ball big-ball cue"><div class="shine"></div></div>`;
+  } else {
+    const def=BALL[d.n];
+    const style=def.t==="st"?"":`background:${def.c}`;
+    const inner=(def.t==="st"?`<div class="band" style="background:${def.c}"></div>`:"")
+      +`<div class="shine"></div><div class="num">${d.n}</div>`;
+    const ballCls="ball big-ball"+(def.t==="st"?" stripe":"")+(d.kind==="special"?" special":"");
+    ballHTML=`<div class="${ballCls}" style="${style}">${inner}</div>`;
+  }
   const passHTML=d.passed?`<div class="shot-pass">ครบโควต้ายิงติดกัน → เปลี่ยนคนยิง</div>`:"";
   const ov=el(`<div class="overlay shot-ov ${K.cls}"><div class="overlay-box shot-box">
-    <div class="${ballCls}" style="${style}">${inner}</div>
+    ${ballHTML}
     <div class="shot-who">ผู้ยิง: <b>${esc(d.shooterName)}</b></div>
     <div class="shot-kind">${K.icon} ${K.label}</div>
     <div class="shot-pts">${K.pts}</div>
@@ -975,6 +1005,10 @@ function rebuildState(){
     if(a.miss){
       S.actions.push({miss:true, by:sh});
       S.log.push(`[${S.players[sh].name}] ยิงพลาด`);
+    } else if(a.scratch){
+      const msg=applyScratch(sh);
+      S.actions.push({scratch:true, by:sh});
+      S.log.push(`[${S.players[sh].name}] ${msg}`);
     } else {
       const msg=applyPotScore(a.n, sh);
       S.actions.push({n:a.n, by:sh});
