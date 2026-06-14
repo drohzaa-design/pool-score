@@ -476,12 +476,35 @@ function playAlarm(){
     });
   }catch(e){}
 }
-function speak(text){
+let _thVoice=null;
+function pickThaiVoice(){
   try{
+    const vs=speechSynthesis.getVoices()||[];
+    _thVoice = vs.find(v=>/th(-|_)?/i.test(v.lang)) || null;
+  }catch(e){}
+}
+try{ pickThaiVoice(); if(typeof speechSynthesis!=="undefined") speechSynthesis.onvoiceschanged=pickThaiVoice; }catch(e){}
+function speak(text){
+  if(_muted) return;
+  try{
+    if(!_thVoice) pickThaiVoice();
     const u=new SpeechSynthesisUtterance(text);
     u.lang="th-TH"; u.rate=1; u.volume=1; u.pitch=1;
+    if(_thVoice) u.voice=_thVoice;
     speechSynthesis.cancel(); speechSynthesis.speak(u);
   }catch(e){}
+}
+/* ประโยคพูดสรุปผลการยิงแต่ละลูก (ภาษาไทย) */
+function shotPhrase(kind, shooterName, ownerName, hc){
+  hc=hc||defaultHC();
+  switch(kind){
+    case "own":     return `${shooterName} ยิงเลขของตัวเอง ได้ ${hc.own} แต้มจากทุกคน`;
+    case "steal":   return `${shooterName} ยิงลูกของ ${ownerName} ได้ ${hc.steal} แต้มจาก ${ownerName}`;
+    case "special": return `${shooterName} ยิงลูกพิเศษ ได้ ${hc.special} แต้มจากทุกคน`;
+    case "scratch": return `${shooterName} ลูกขาวลง เสีย ${hc.scratch} แต้มให้ทุกคน`;
+    case "miss":    return `${shooterName} ยิงพลาด`;
+    default:        return `${shooterName} ยิงลูกหลอก ไม่มีแต้ม`;
+  }
 }
 
 /* ---------------- sound effects ---------------- */
@@ -1095,6 +1118,7 @@ function renderShoot(){
   A.appendChild(skip);
   skip.querySelector("#skip").addEventListener("click",()=>{
     S._strokeOpen=false;
+    speak(shotPhrase("miss", S.players[sh].name));
     S.actions.push({miss:true, by:sh});
     S.log.push(`[${S.players[sh].name}] ยิงพลาด`);
     S._lastReveal=`${S.players[sh].name} ยิงพลาด → เปลี่ยนคน`;
@@ -1103,6 +1127,7 @@ function renderShoot(){
   skip.querySelector("#scratch").addEventListener("click",()=>{
     const shooterName=S.players[sh].name;
     sfx("scratch");
+    speak(shotPhrase("scratch", shooterName, "", S.players[sh].hc));
     S._strokeOpen=false;
     const msg=applyScratch(sh);
     S.actions.push({scratch:true, by:sh});
@@ -1232,6 +1257,7 @@ function shootBall(n){
   const shooterName=S.players[sh].name;
   const ownerName = kind==="steal" ? S.players[b.owner].name : "";
   sfx(kind);
+  speak(shotPhrase(kind, shooterName, ownerName, S.players[sh].hc));
   const msg=applyPotScore(n, sh);
   const cont = !!S._strokeOpen;            // ลูกนี้ลงพร้อมครั้งก่อน (ต่อจากลูกที่แล้วในการยิงครั้งเดียว)
   S.actions.push({n, by:sh, sameStroke:cont});
@@ -1495,7 +1521,7 @@ function renderResult(){
   const btn=document.getElementById("muteBtn");
   const sync=()=>{ btn.textContent=_muted?"🔇":"🔊"; btn.classList.toggle("off",_muted); };
   sync();
-  btn.addEventListener("click",()=>{ setMuted(!_muted); sync(); if(!_muted) sfx("own"); });
+  btn.addEventListener("click",()=>{ setMuted(!_muted); sync(); if(_muted){ try{speechSynthesis.cancel();}catch(e){} } else { sfx("own"); } });
 })();
 renderSetup();   // แสดงข้อมูลในเครื่องทันที
 cloudBoot();     // แล้วค่อย sync กับคลาวด์ (ดึงข้อมูลล่าสุด/กันข้อมูลหาย)
