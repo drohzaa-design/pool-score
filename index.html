@@ -1085,6 +1085,13 @@ function renderShoot(){
   // reveal box
   const rev=el(`<div class="reveal muted" id="rev">${esc(S._lastReveal||('แตะลูกที่ '+S.players[sh].name+' ยิงลง'))}</div>`);
 
+  // ปุ่มยกเลิกการกระทำล่าสุด ไว้ด้านบนเหนือลูก (กดง่ายระหว่างเล่น)
+  if(S.actions.length){
+    const undoTop=el(`<button class="btn-ghost" id="undoTop" style="width:100%;margin-bottom:12px">↩ ยกเลิกการกระทำล่าสุด</button>`);
+    undoTop.addEventListener("click",undoLast);
+    A.appendChild(undoTop);
+  }
+
   // balls
   const remaining=Object.values(S.balls).filter(b=>!b.shot).length;
   const bc=el(`<div class="card">
