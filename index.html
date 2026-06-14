@@ -231,7 +231,7 @@ function blankPlayerHOF(){ return {played:0,wins:0,totalNet:0,bestRound:null,wor
   curStreak:0,bestStreak:0,ownPots:0,stealPots:0,specialPots:0,decoyPots:0,leftoverWins:0,lastPlayed:null}; }
 function loadHOF(){ return lsGet(K_HOF, blankHOF()); }
 function saveHOF(h){ lsSet(K_HOF, h); cloudPush(); }
-function resetHOF(){ lsSet(K_HOF, blankHOF()); cloudPush(); }
+function resetHOF(){ lsSet(K_HOF, blankHOF()); cloudOverwrite(); }
 
 function deletePlayer(name){
   saveNames(loadNames().filter(n=>n!==name));
