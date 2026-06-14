@@ -151,6 +151,10 @@
 </div>
 <button id="muteBtn" title="เปิด/ปิดเสียง">🔊</button>
 
+<!-- Firebase (cloud sync) -->
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
+
 <script>
 "use strict";
 
@@ -200,23 +204,23 @@ function loadNames(){
   }
   return names;
 }
-function saveNames(arr){ lsSet(K_NAMES, arr); }
+function saveNames(arr){ lsSet(K_NAMES, arr); cloudPush(); }
 function ensureName(name){ const a=loadNames(); if(!a.includes(name)){ a.push(name); saveNames(a);} }
 function hasName(name){ return loadNames().includes(name); }
 
 /* ประวัติรอบนี้ (session: หลายตาในวงเดียว) */
 function blankSession(){ return {players:{}, pairs:{}, started:new Date().toISOString()}; }
 function loadSession(){ return lsGet(K_SES, blankSession()); }
-function saveSession(s){ lsSet(K_SES, s); }
-function resetSession(){ lsSet(K_SES, blankSession()); }
+function saveSession(s){ lsSet(K_SES, s); cloudPush(); }
+function resetSession(){ lsSet(K_SES, blankSession()); cloudPush(); }
 
 /* Hall of Fame (lifetime) */
 function blankHOF(){ return {players:{}, since:new Date().toISOString()}; }
 function blankPlayerHOF(){ return {played:0,wins:0,totalNet:0,bestRound:null,worstRound:null,
   curStreak:0,bestStreak:0,ownPots:0,stealPots:0,specialPots:0,decoyPots:0,leftoverWins:0,lastPlayed:null}; }
 function loadHOF(){ return lsGet(K_HOF, blankHOF()); }
-function saveHOF(h){ lsSet(K_HOF, h); }
-function resetHOF(){ lsSet(K_HOF, blankHOF()); }
+function saveHOF(h){ lsSet(K_HOF, h); cloudPush(); }
+function resetHOF(){ lsSet(K_HOF, blankHOF()); cloudPush(); }
 
 function deletePlayer(name){
   saveNames(loadNames().filter(n=>n!==name));
@@ -257,6 +261,120 @@ function settlement(pairs){
     else if(v<0) out.push({from:a,to:b,amt:-v});
   }
   return out.sort((x,y)=>y.amt-x.amt);
+}
+
+/* ---------------- Firebase cloud sync ----------------
+   เก็บข้อมูล (ชื่อผู้เล่น + รอบนี้ + Hall of Fame) เป็นชุดเดียวที่แชร์กันทั้งกลุ่ม
+   - ตอนเปิดแอป: ดึงจากคลาวด์มาก่อน (กันข้อมูลหายเวลา localStorage โดนเคลียร์)
+   - กันข้อมูลหาย: ไม่เขียนทับคลาวด์ด้วยข้อมูลว่าง และ merge แบบรวม (ไม่ทิ้งผู้เล่น/สถิติเดิม)
+   - sync แบบ realtime: ทุกเครื่องเห็นข้อมูลตรงกัน */
+const firebaseConfig = {
+  apiKey: "AIzaSyDWGTy4cBFbpbfHOZr3TEWxM3YNbluozf8",
+  authDomain: "pool-score-28614.firebaseapp.com",
+  projectId: "pool-score-28614",
+  storageBucket: "pool-score-28614.firebasestorage.app",
+  messagingSenderId: "153835723903",
+  appId: "1:153835723903:web:311f343ad499ed1bdb734a"
+};
+const CLOUD_COL="pool", CLOUD_DOC="shared";
+let _db=null, _cloudDoc=null, _cloudOK=false, _applyingRemote=false, _pushTimer=null;
+
+function cloudInit(){
+  try{
+    if(typeof firebase==="undefined") return false;
+    firebase.initializeApp(firebaseConfig);
+    _db=firebase.firestore();
+    _cloudDoc=_db.collection(CLOUD_COL).doc(CLOUD_DOC);
+    _cloudOK=true;
+    return true;
+  }catch(e){ console.warn("Firebase init failed", e); _cloudOK=false; return false; }
+}
+
+function localSnapshot(){ return { names:loadNames(), session:loadSession(), hof:loadHOF() }; }
+function isEmptyData(d){
+  if(!d) return true;
+  const noNames=!d.names || !d.names.length;
+  const noHof=!d.hof || !d.hof.players || !Object.keys(d.hof.players).length;
+  return noNames && noHof;
+}
+function mergeNames(a,b){
+  const out=[...(a||[])];
+  (b||[]).forEach(n=>{ if(!out.includes(n)) out.push(n); });
+  return out;
+}
+function mergeHOF(a,b){
+  a=a||blankHOF(); b=b||blankHOF();
+  const since=(a.since&&b.since)?(a.since<b.since?a.since:b.since):(a.since||b.since||new Date().toISOString());
+  const out={players:{}, since};
+  const names=new Set([...Object.keys(a.players||{}), ...Object.keys(b.players||{})]);
+  names.forEach(n=>{
+    const pa=(a.players||{})[n], pb=(b.players||{})[n];
+    if(pa&&pb) out.players[n]=((pb.played||0)>(pa.played||0))?pb:pa; // เก็บสถิติที่เล่นมามากกว่า (กันสถิติถอยหลัง)
+    else out.players[n]=pa||pb;
+  });
+  return out;
+}
+function mergeSession(a,b){
+  if(!a||!a.started) return b||blankSession();
+  if(!b||!b.started) return a;
+  return (new Date(b.started)>new Date(a.started))?b:a; // รอบที่เริ่มล่าสุดชนะ
+}
+function mergeData(local, remote){
+  return {
+    names: mergeNames(local.names, remote.names),
+    hof:   mergeHOF(local.hof, remote.hof),
+    session: mergeSession(local.session, remote.session)
+  };
+}
+function applyToLocal(d){
+  _applyingRemote=true;
+  try{
+    if(d.names) lsSet(K_NAMES, d.names);
+    if(d.session) lsSet(K_SES, d.session);
+    if(d.hof) lsSet(K_HOF, d.hof);
+  } finally { _applyingRemote=false; }
+}
+function cloudPush(){
+  if(!_cloudOK || _applyingRemote) return;
+  clearTimeout(_pushTimer);
+  _pushTimer=setTimeout(async ()=>{
+    try{
+      const local=localSnapshot();
+      let remote=null;
+      try{ const snap=await _cloudDoc.get(); if(snap.exists) remote=snap.data(); }catch(e){}
+      const merged = remote ? mergeData(local, remote) : local;
+      if(isEmptyData(merged)) return; // ไม่เขียนทับด้วยข้อมูลว่างเด็ดขาด
+      merged.updatedAt = firebase.firestore.FieldValue.serverTimestamp();
+      await _cloudDoc.set(merged, {merge:true});
+    }catch(e){ console.warn("cloud push failed", e); }
+  }, 600);
+}
+function cloudListen(){
+  if(!_cloudOK) return;
+  _cloudDoc.onSnapshot(snap=>{
+    if(!snap.exists) return;
+    const remote=snap.data();
+    if(isEmptyData(remote)) return;
+    const merged=mergeData(localSnapshot(), remote);
+    applyToLocal(merged);
+    // refresh จอเฉพาะตอนไม่ได้อยู่ในเกม และไม่ได้กำลังพิมพ์อยู่ (กันจอเด้งตอนกรอกชื่อ)
+    const ae=document.activeElement;
+    const typing=ae && (ae.tagName==="INPUT"||ae.tagName==="TEXTAREA");
+    if(S===null && !typing){ try{ renderSetup(); }catch(e){} }
+  }, err=>console.warn("cloud listen err", err));
+}
+async function cloudBoot(){
+  if(!cloudInit()) return;
+  try{
+    const snap=await _cloudDoc.get();
+    if(snap.exists && !isEmptyData(snap.data())){
+      applyToLocal(mergeData(localSnapshot(), snap.data()));
+      if(S===null){ try{ renderSetup(); }catch(e){} }
+    } else if(!isEmptyData(localSnapshot())){
+      cloudPush(); // คลาวด์ยังว่าง -> ส่งข้อมูลในเครื่องขึ้นไปตั้งต้น
+    }
+  }catch(e){ console.warn("cloud initial load failed", e); }
+  cloudListen();
 }
 
 /* ---------------- game state ---------------- */
@@ -1136,7 +1254,8 @@ function renderResult(){
   sync();
   btn.addEventListener("click",()=>{ setMuted(!_muted); sync(); if(!_muted) sfx("own"); });
 })();
-renderSetup();
+renderSetup();   // แสดงข้อมูลในเครื่องทันที
+cloudBoot();     // แล้วค่อย sync กับคลาวด์ (ดึงข้อมูลล่าสุด/กันข้อมูลหาย)
 </script>
 </body>
 </html>
