@@ -181,6 +181,10 @@ const BALL=[null,
    เลขตัวเอง/พิเศษ = UNIT · แย่งเลขคนอื่น = UNIT×2 · ลูกขาว = เสีย UNIT · โบนัสลูกเหลือ = เลขละ UNIT×2 */
 const UNIT=20;
 
+/* ค่าต่อให้ (handicap) เริ่มต้นของผู้เล่นทั่วไป — ทุกแต้มยึด "ค่าของคนยิง" */
+function defaultHC(){ return {own:UNIT, special:UNIT, steal:UNIT*2, scratch:UNIT, contLimit:null}; }
+function isCustomHC(hc){ return !!hc && (hc.own!==UNIT || hc.special!==UNIT || hc.steal!==UNIT*2 || hc.scratch!==UNIT || hc.contLimit); }
+
 /* ---------------- storage (localStorage + in-memory fallback) ----------------
    3 ส่วน: รายชื่อผู้เล่น / ประวัติรอบนี้ (session) / Hall of Fame (lifetime) */
 const K_NAMES="pool_names_v1", K_SES="pool_session_v1", K_HOF="pool_hof_v1";
@@ -396,6 +400,7 @@ async function cloudBoot(){
 /* ---------------- game state ---------------- */
 let S = null;
 function newGameState(players, cardsPer, contMode, contLimit){
+  players = players.map(p=>({name:p.name, hc:Object.assign(defaultHC(), p.hc||{})}));
   const P=players.length;
   const ledger=Array.from({length:P},()=>Array(P).fill(0));
   // balls 1..15
@@ -543,6 +548,8 @@ let setupSelected=[]; // names chosen for this round (order = seating)
 let setupCards=3;
 let setupContMode="unlimited"; // "unlimited" | "limited"
 let setupContLimit=3;          // max consecutive pots when limited
+let setupHC={};                // ต่อให้รายคน keyed by name -> {own,special,steal,scratch,contLimit}
+let hcOpen=new Set();          // ชื่อที่กางแผง "ต่อให้" อยู่
 
 let homeTab="play";
 let hofSort="net", hofOpen=null;
@@ -566,6 +573,8 @@ function renderSetup(){
 }
 
 function renderPlayTab(A){
+  let hcBox=null; // กล่องตั้งค่า "ต่อให้รายคน" (อัปเดตเมื่อเลือก/เพิ่มคน)
+  const refreshHC=()=>{ if(hcBox) renderHandicaps(hcBox); };
   const c1=el(`<div class="card"></div>`);
   c1.innerHTML=`<h2>1. ผู้เล่น <span class="pill" id="cnt"></span></h2>
     <div class="hint">แตะเพื่อเลือกเข้าตานี้ (ลำดับการเลือก = ลำดับการกรอกไพ่)</div>
@@ -589,7 +598,7 @@ function renderPlayTab(A){
       ch.addEventListener("click",e=>{
         if(on) setupSelected=setupSelected.filter(n=>n!==nm);
         else setupSelected.push(nm);
-        renderChips(); updateCnt();
+        renderChips(); updateCnt(); refreshHC();
       });
       chips.appendChild(ch);
     });
@@ -603,7 +612,7 @@ function renderPlayTab(A){
     if(!name) return;
     if(hasName(name)){ c1.querySelector("#setupErr").textContent="มีชื่อนี้แล้ว"; return; }
     ensureName(name); setupSelected.push(name); inp.value=""; c1.querySelector("#setupErr").textContent="";
-    renderChips(); updateCnt();
+    renderChips(); updateCnt(); refreshHC();
   });
   c1.querySelector("#newName").addEventListener("keydown",e=>{ if(e.key==="Enter") c1.querySelector("#addName").click(); });
 
@@ -637,6 +646,15 @@ function renderPlayTab(A){
   c2b.querySelector("#contLimit").addEventListener("input",e=>setupContLimit=parseInt(e.target.value)||0);
   paintCont();
 
+  const c2c=el(`<div class="card">
+    <h2>4. ต่อให้รายคน <span class="pill">ไม่ตั้งก็ได้</span></h2>
+    <div class="hint">ปรับแต้ม/กติกาเฉพาะบางคน เช่น คนเก่งยิงแย่งเลขได้น้อยลง หรือยิงติดกันได้จำกัด · ทุกแต้มยึดค่าของคนยิง</div>
+    <div id="hcBox" style="margin-top:10px"></div>
+  </div>`);
+  A.appendChild(c2c);
+  hcBox=c2c.querySelector("#hcBox");
+  renderHandicaps(hcBox);
+
   const c3=el(`<div class="card">
     <button class="btn-primary" id="start">เริ่มกรอกไพ่ ▶</button>
     <div class="err" id="startErr"></div>
@@ -649,8 +667,46 @@ function renderPlayTab(A){
     const total=setupSelected.length*setupCards;
     if(total>13){ err.textContent=`รวม ${total} ใบ เกิน 13 (ลดจำนวนคนหรือไพ่ต่อคน)`; return; }
     if(setupContMode==="limited" && (!setupContLimit||setupContLimit<1)){ err.textContent="กรอกจำนวนยิงติดกันสูงสุด"; return; }
-    S=newGameState(setupSelected.map(n=>({name:n})), setupCards, setupContMode, setupContLimit);
+    S=newGameState(setupSelected.map(n=>({name:n, hc:setupHC[n]})), setupCards, setupContMode, setupContLimit);
     renderEntry();
+  });
+}
+
+/* แผงตั้งค่า "ต่อให้รายคน" ในหน้าตั้งวง */
+function renderHandicaps(box){
+  box.innerHTML="";
+  if(!setupSelected.length){ box.innerHTML=`<div class="muted">เลือกผู้เล่นด้านบนก่อน</div>`; return; }
+  setupSelected.forEach(nm=>{
+    const hc=setupHC[nm]||(setupHC[nm]=defaultHC());
+    const open=hcOpen.has(nm);
+    const row=el(`<div class="hc-row" style="border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:8px">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <b>${esc(nm)} ${isCustomHC(hc)?'<span class="pill pos">ต่อให้</span>':''}</b>
+        <button class="btn-ghost hc-tog" style="width:auto;padding:4px 14px">${open?'ปิด ▲':'⚙️ ตั้งค่า'}</button>
+      </div>
+      <div class="hc-body" style="display:${open?'block':'none'};margin-top:8px">
+        <label>ยิงเลขตัวเอง (แต้ม/คน)</label><input type="number" class="hc-own" value="${hc.own}">
+        <label>ยิงลูกพิเศษ ⭐ (แต้ม/คน)</label><input type="number" class="hc-special" value="${hc.special}">
+        <label>ยิงแย่งเลขคนอื่น (แต้ม)</label><input type="number" class="hc-steal" value="${hc.steal}">
+        <label>ลูกขาวลง/ตกโต๊ะ เสีย (แต้ม/คน)</label><input type="number" class="hc-scratch" value="${hc.scratch}">
+        <label>จำกัดยิงติดกัน (ลูก · เว้นว่าง = ตามวง)</label><input type="number" class="hc-cont" min="1" value="${hc.contLimit||''}">
+        <div class="spacer"></div>
+        <button class="btn-ghost hc-reset" style="width:100%">↺ คืนค่าปกติ</button>
+      </div>
+    </div>`);
+    row.querySelector(".hc-tog").addEventListener("click",()=>{ open?hcOpen.delete(nm):hcOpen.add(nm); renderHandicaps(box); });
+    const numv=(sel,def)=>{ const v=parseInt(row.querySelector(sel).value); return isNaN(v)?def:v; };
+    const upd=()=>{
+      hc.own=numv(".hc-own",UNIT); hc.special=numv(".hc-special",UNIT);
+      hc.steal=numv(".hc-steal",UNIT*2); hc.scratch=numv(".hc-scratch",UNIT);
+      const cl=parseInt(row.querySelector(".hc-cont").value); hc.contLimit=(isNaN(cl)||cl<1)?null:cl;
+      const tag=row.querySelector(".pill"); // อัปเดต badge "ต่อให้" สดๆ
+      if(isCustomHC(hc) && !tag){ row.querySelector("b").insertAdjacentHTML("beforeend",' <span class="pill pos">ต่อให้</span>'); }
+      else if(!isCustomHC(hc) && tag){ tag.remove(); }
+    };
+    row.querySelectorAll("input").forEach(inp=>inp.addEventListener("input",upd));
+    row.querySelector(".hc-reset").addEventListener("click",()=>{ setupHC[nm]=defaultHC(); renderHandicaps(box); });
+    box.appendChild(row);
   });
 }
 
@@ -870,13 +926,20 @@ function buildOwners(){
 ============================================================ */
 /* replay actions to find whose turn it is + current consecutive streak.
    pot = keep turn (until limit). miss = pass turn. */
+/* ลิมิตยิงติดกันของคน i: ใช้ค่าต่อให้รายคนก่อน ถ้าไม่มีจึงใช้ค่าของวง (0 = ไม่จำกัด) */
+function limitFor(i){
+  const pl=S.players[i].hc && S.players[i].hc.contLimit;
+  if(pl) return pl;
+  return S.contMode==="limited" ? S.contLimit : 0;
+}
 function turnState(){
   let sh=S.firstShooter, streak=0;
   for(const a of S.actions){
     if(a.miss||a.scratch){ sh=(sh+1)%S.P; streak=0; }
     else {
       streak++;
-      if(S.contMode==="limited" && streak>=S.contLimit){ sh=(sh+1)%S.P; streak=0; }
+      const lim=limitFor(sh);
+      if(lim && streak>=lim){ sh=(sh+1)%S.P; streak=0; }
     }
   }
   return {sh, streak};
@@ -949,7 +1012,7 @@ function renderShoot(){
   // miss / skip turn + ลูกขาว (scratch)
   const skip=el(`<div class="card">
     <button class="btn-ghost" id="skip" style="width:100%">⏭ ยิงพลาด / ข้ามไปคนถัดไป</button>
-    <button class="btn-ghost foul-btn" id="scratch" style="width:100%;margin-top:8px">⚪ ลูกขาวลง / ตกโต๊ะ — เสีย ${UNIT} แต้มให้ทุกคน</button>
+    <button class="btn-ghost foul-btn" id="scratch" style="width:100%;margin-top:8px">⚪ ลูกขาวลง / ตกโต๊ะ — เสีย ${S.players[sh].hc.scratch} แต้มให้ทุกคน</button>
   </div>`);
   A.appendChild(skip);
   skip.querySelector("#skip").addEventListener("click",()=>{
@@ -966,11 +1029,26 @@ function renderShoot(){
     S.log.push(`[${shooterName}] ${msg}`);
     S._lastReveal=`${shooterName} ${msg} → เปลี่ยนคน`;
     renderShoot();
-    showShotPopup({kind:"scratch", shooterName, passed:true});
+    showShotPopup({kind:"scratch", shooterName, passed:true, hc:S.players[sh].hc});
   });
 
   // scoreboard
   A.appendChild(renderScoreCard());
+
+  // สรุป "ต่อให้" รายคน (ถ้ามี) ให้ทุกคนเห็นดีลก่อนเล่น
+  const hcList=S.players.map((p,i)=>({p,i})).filter(({p})=>isCustomHC(p.hc));
+  if(hcList.length){
+    const rows=hcList.map(({p})=>{
+      const h=p.hc, parts=[];
+      if(h.own!==UNIT) parts.push(`เลขตัวเอง ${h.own}`);
+      if(h.special!==UNIT) parts.push(`พิเศษ ${h.special}`);
+      if(h.steal!==UNIT*2) parts.push(`แย่ง ${h.steal}`);
+      if(h.scratch!==UNIT) parts.push(`ลูกขาว ${h.scratch}`);
+      if(h.contLimit) parts.push(`ยิงติดกัน ≤ ${h.contLimit}`);
+      return `<div style="padding:6px 0;border-bottom:1px solid var(--line)"><b>${esc(p.name)}</b> <span class="muted">${parts.join(" · ")}</span></div>`;
+    }).join("");
+    A.appendChild(el(`<div class="card"><h2>🎯 ต่อให้รายคน</h2>${rows}</div>`));
+  }
 
   // info + undo (ตาจบเองอัตโนมัติ ไม่มีปุ่มจบ)
   const endCard=el(`<div class="card">
@@ -992,17 +1070,18 @@ function renderShoot(){
 function applyPotScore(n, sh){
   const b=S.balls[n];
   b.shot=true; b.shotBy=sh;
+  const hc=S.players[sh].hc;
   let msg="";
   if(b.type==="special"){
-    S.players.forEach((p,j)=>transfer(sh,j,UNIT));
-    msg=`ยิงลูก ${n} = แต้มพิเศษ ⭐ ลง → ได้ ${UNIT} แต้มจากทุกคน`;
+    S.players.forEach((p,j)=>transfer(sh,j,hc.special));
+    msg=`ยิงลูก ${n} = แต้มพิเศษ ⭐ ลง → ได้ ${hc.special} แต้มจากทุกคน`;
   } else if(b.type==="owned"){
     if(b.owner===sh){
-      S.players.forEach((p,j)=>transfer(sh,j,UNIT));
-      msg=`ยิงลูก ${n} = เลขของตัวเองลง → ได้ ${UNIT} แต้มจากทุกคน`;
+      S.players.forEach((p,j)=>transfer(sh,j,hc.own));
+      msg=`ยิงลูก ${n} = เลขของตัวเองลง → ได้ ${hc.own} แต้มจากทุกคน`;
     } else {
-      transfer(sh,b.owner,UNIT*2);
-      msg=`ยิงลูก ${n} = เลขของ ${S.players[b.owner].name} ลง → ได้ ${UNIT*2} แต้มจาก ${S.players[b.owner].name}`;
+      transfer(sh,b.owner,hc.steal);
+      msg=`ยิงลูก ${n} = เลขของ ${S.players[b.owner].name} ลง → ได้ ${hc.steal} แต้มจาก ${S.players[b.owner].name}`;
     }
   } else {
     msg=`ยิงลูก ${n} = ลูกหลอก 🫥 ลง → ไม่มีแต้ม`;
@@ -1012,18 +1091,20 @@ function applyPotScore(n, sh){
 
 /* ลูกขาวลงหลุม / ตกออกนอกโต๊ะ: ผู้ยิงเสีย UNIT แต้มให้ทุกคน (คนละ UNIT) แล้วเปลี่ยนคน */
 function applyScratch(sh){
-  S.players.forEach((p,j)=>{ if(j!==sh) transfer(j,sh,UNIT); });
-  return `⚪ ลูกขาวลง/ตกโต๊ะ → เสีย ${UNIT} แต้มให้ทุกคน`;
+  const sc=S.players[sh].hc.scratch;
+  S.players.forEach((p,j)=>{ if(j!==sh) transfer(j,sh,sc); });
+  return `⚪ ลูกขาวลง/ตกโต๊ะ → เสีย ${sc} แต้มให้ทุกคน`;
 }
 
 /* popup เด้งทุกครั้งที่ยิงลูก -> เห็นชัดว่าลูกของใคร / หลอก / พิเศษ */
 function showShotPopup(d, after){
+  const hc=d.hc||defaultHC();
   const K={
-    own:{cls:"k-own", icon:"✅", label:"เลขของตัวเอง", pts:`ได้ ${UNIT} แต้มจากทุกคน`},
-    steal:{cls:"k-steal", icon:"🎯", label:`เลขของ ${esc(d.ownerName)}`, pts:`ได้ ${UNIT*2} แต้มจาก ${esc(d.ownerName)}`},
-    special:{cls:"k-special", icon:"⭐", label:"ลูกพิเศษ", pts:`ได้ ${UNIT} แต้มจากทุกคน`},
+    own:{cls:"k-own", icon:"✅", label:"เลขของตัวเอง", pts:`ได้ ${hc.own} แต้มจากทุกคน`},
+    steal:{cls:"k-steal", icon:"🎯", label:`เลขของ ${esc(d.ownerName)}`, pts:`ได้ ${hc.steal} แต้มจาก ${esc(d.ownerName)}`},
+    special:{cls:"k-special", icon:"⭐", label:"ลูกพิเศษ", pts:`ได้ ${hc.special} แต้มจากทุกคน`},
     decoy:{cls:"k-decoy", icon:"🫥", label:"ลูกหลอก", pts:"ไม่มีแต้ม"},
-    scratch:{cls:"k-scratch", icon:"⚪", label:"ลูกขาวลง / ตกโต๊ะ", pts:`เสีย ${UNIT} แต้มให้ทุกคน`}
+    scratch:{cls:"k-scratch", icon:"⚪", label:"ลูกขาวลง / ตกโต๊ะ", pts:`เสีย ${hc.scratch} แต้มให้ทุกคน`}
   }[d.kind];
   let ballHTML;
   if(d.kind==="scratch"){
@@ -1070,7 +1151,7 @@ function shootBall(n){
   const lo=applyLeftover();
   const ended=maybeAutoEnd();   // ตาจบเองอัตโนมัติเมื่อหมดโต๊ะ/เหลือแต่ลูกหลอก
   if(!ended) renderShoot();
-  showShotPopup({n, kind, shooterName, ownerName, passed}, ()=>{ if(lo) showLeftoverPopup(lo); });
+  showShotPopup({n, kind, shooterName, ownerName, passed, hc:S.players[sh].hc}, ()=>{ if(lo) showLeftoverPopup(lo); });
 }
 
 /* แจกโบนัสลูกเหลือ: เมื่อลูกหลอกหมดโต๊ะแล้ว และลูกของผู้เล่นเหลือไม่เกินจำนวนไพ่
