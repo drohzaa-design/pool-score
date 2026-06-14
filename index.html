@@ -241,6 +241,18 @@ function deletePlayer(name){
   const h=loadHOF(); delete h.players[name]; saveHOF(h);
 }
 
+/* เคลียร์เฉพาะ 1 คน (คนออกก่อนจบรอบ): นำยอดของคนนั้นออกจาก "รอบนี้" เท่านั้น
+   — ไม่แตะรายชื่อผู้เล่นและ Hall of Fame — คนอื่นยอดสะสมยังครบ
+   ใช้ cloudOverwrite เพื่อไม่ให้ merge ดึงยอดเดิมกลับ */
+function cashOutPlayer(name){
+  const s=loadSession();
+  delete s.players[name];
+  delete s.pairs[name];
+  Object.keys(s.pairs).forEach(k=>{ if(s.pairs[k]) delete s.pairs[k][name]; });
+  lsSet(K_SES, s);
+  cloudOverwrite();
+}
+
 /* บันทึก 1 ตาที่จบแล้ว ลงทั้ง session และ HoF */
 function recordRoundResult(results, pairDelta){
   const ses=loadSession(), hof=loadHOF();
@@ -783,6 +795,33 @@ function renderSessionTab(A){
       <b>${esc(x.from)}</b> เสียแต้ม <b>${esc(x.to)}</b> <span class="pill pos">${x.amt}</span></div>`).join("");
     A.appendChild(el(`<div class="card"><h2>ใครเสียแต้มใคร (หักลบทั้งรอบ)</h2>${s}</div>`));
   }
+
+  // เคลียร์รายคน — สำหรับคนที่ออกก่อนจบรอบ (เอาออกเฉพาะคนนั้น คนอื่นยอดยังอยู่)
+  const co=el(`<div class="card">
+    <h2>เคลียร์รายคน (คนออกก่อน)</h2>
+    <div class="hint">ใครจ่าย/รับยอดของตัวเองแล้วจะออกก่อน กดเคลียร์เฉพาะคนนั้น — คนอื่นยอดสะสมยังครบ (Hall of Fame ไม่หาย)</div>
+    <div id="coList" style="margin-top:10px"></div>
+  </div>`);
+  A.appendChild(co);
+  const coList=co.querySelector("#coList");
+  rows.forEach(r=>{
+    const row=el(`<div class="row" style="justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)">
+      <span><b>${esc(r.n)}</b> <span class="${r.net>0?'pos':r.net<0?'neg':''}">${r.net>0?'+':''}${r.net}</span></span>
+      <button class="btn-danger co-btn" style="width:auto;padding:6px 16px">เคลียร์ & ออก</button>
+    </div>`);
+    row.querySelector(".co-btn").addEventListener("click",()=>{
+      const inv=settlement(ses.pairs).filter(x=>x.from===r.n||x.to===r.n);
+      const pay=inv.filter(x=>x.from===r.n).map(x=>`${x.to} ${x.amt}`);
+      const get=inv.filter(x=>x.to===r.n).map(x=>`${x.from} ${x.amt}`);
+      let msg=`เคลียร์ "${r.n}" ออกจากรอบนี้?`;
+      if(pay.length) msg+=`\n\n${r.n} จ่าย → ${pay.join(", ")}`;
+      if(get.length) msg+=`\n${r.n} รับ ← ${get.join(", ")}`;
+      if(!pay.length && !get.length) msg+=`\n\n(ยอดสุทธิเป็น 0 ไม่มีรายการจ่าย/รับ)`;
+      msg+=`\n\nหลังยืนยัน ยอดของ ${r.n} จะถูกนำออกจากรอบ\n(คนอื่นยอดเดิม · Hall of Fame ไม่หาย)`;
+      if(confirm(msg)){ cashOutPlayer(r.n); renderSetup(); }
+    });
+    coList.appendChild(row);
+  });
 
   const rc=el(`<div class="card"><button class="btn-danger" id="rs" style="width:100%">♻️ เคลียร์ยอดรอบนี้ (Reset)</button></div>`);
   A.appendChild(rc);
@@ -1486,6 +1525,14 @@ function startNextRound(){
   entryGateOpen=false;
   renderEntry();
 }
+/* แก้รายชื่อก่อนเริ่มตาต่อไป (มีคนเข้า/ออกกลางรอบ) — ไปหน้าตั้งวงโดยเลือกวงเดิมไว้ให้
+   แล้วผู้ใช้เพิ่ม/เอาคนออกได้ ก่อนกด "เริ่มเกม" · ยอดสะสมใน "รอบนี้" ไม่หาย */
+function editRosterNextRound(){
+  setupSelected = S.players.map(p=>p.name);
+  S.players.forEach(p=>{ setupHC[p.name]=Object.assign(defaultHC(), p.hc); });
+  setupCards=S.cardsPer; setupContMode=S.contMode; setupContLimit=S.contLimit; setupDealMode=S.dealMode;
+  S=null; entryGateOpen=false; homeTab="play"; renderSetup();
+}
 /* รายละเอียดของ "ตานี้" (อันดับ + ใครได้จากใคร + บันทึก) */
 function renderRoundDetail(box){
   const rank=el(`<div class="card"><h2>อันดับ (แต้มสุทธิ)</h2><div id="r"></div></div>`);
@@ -1548,10 +1595,13 @@ function renderResult(){
   // เล่นตาต่อไปได้เลย (วงเดิม) — ไว้บนสุด กดง่าย
   const next=el(`<div class="card">
     <button class="btn-primary" id="again" style="width:100%">▶ เล่นตาต่อไป (วงเดิม)</button>
+    <div class="spacer"></div>
+    <button class="btn-ghost" id="editRoster" style="width:100%">✏️ เพิ่ม/เอาผู้เล่นออก แล้วเริ่มตาต่อไป</button>
     <div class="hint" style="text-align:center;margin-top:8px;color:var(--accent)">✔ บันทึกลง “ประวัติรอบนี้” และ Hall of Fame แล้ว</div>
   </div>`);
   A.appendChild(next);
   next.querySelector("#again").addEventListener("click",startNextRound);
+  next.querySelector("#editRoster").addEventListener("click",editRosterNextRound);
 
   // สลับดู ตานี้ / รวมทั้งรอบ
   const seg=el(`<div class="seg" id="resSeg" style="margin-bottom:12px">
