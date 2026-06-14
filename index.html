@@ -47,6 +47,9 @@
     background:radial-gradient(circle at 35% 35%, rgba(255,255,255,.92), rgba(255,255,255,0) 70%)}
   .ball .num{position:relative;z-index:3;width:54%;height:54%;border-radius:50%;background:#fff;color:#111;
     display:flex;align-items:center;justify-content:center;font-weight:800;font-size:15px;box-shadow:0 1px 2px rgba(0,0,0,.3)}
+  .reveal-balls{display:flex;flex-wrap:wrap;gap:14px;justify-content:center;margin:10px 0}
+  .reveal-balls .ball{width:72px;height:72px;cursor:default}
+  .reveal-balls .ball .num{font-size:26px}
   .ball.shot{opacity:.3;cursor:default}
   .ball.shot .num{text-decoration:line-through}
   .ball.special{outline:3px solid var(--gold);outline-offset:-3px}
@@ -921,7 +924,7 @@ function renderEntry(){
       <h2>เลขของ ${esc(name)} <span class="pill">${S.cardsPer} ใบ</span></h2>
       <div class="hint">จำเลขของตัวเองให้ดี แล้วกดซ่อนก่อนส่งเครื่องต่อ</div>
       <div class="spacer"></div>
-      <div class="reveal-balls" style="display:flex;flex-wrap:wrap;gap:14px;justify-content:center;margin:10px 0">${balls}</div>
+      <div class="reveal-balls">${balls}</div>
       <div class="spacer"></div>
       <button class="btn-primary" id="confirm">จำได้แล้ว ซ่อน 🔒</button>
     </div>`);
