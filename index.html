@@ -185,8 +185,8 @@ const BALL=[null,
 const UNIT=20;
 
 /* ค่าต่อให้ (handicap) เริ่มต้นของผู้เล่นทั่วไป — ทุกแต้มยึด "ค่าของคนยิง" */
-function defaultHC(){ return {own:UNIT, special:UNIT, steal:UNIT*2, scratch:UNIT, contLimit:null}; }
-function isCustomHC(hc){ return !!hc && (hc.own!==UNIT || hc.special!==UNIT || hc.steal!==UNIT*2 || hc.scratch!==UNIT || hc.contLimit); }
+function defaultHC(){ return {own:UNIT, special:UNIT, steal:UNIT*2, scratch:UNIT, leftover:UNIT*2, contLimit:null}; }
+function isCustomHC(hc){ return !!hc && (hc.own!==UNIT || hc.special!==UNIT || hc.steal!==UNIT*2 || hc.scratch!==UNIT || hc.leftover!==UNIT*2 || hc.contLimit); }
 
 /* ---------------- storage (localStorage + in-memory fallback) ----------------
    3 ส่วน: รายชื่อผู้เล่น / ประวัติรอบนี้ (session) / Hall of Fame (lifetime) */
@@ -740,6 +740,7 @@ function renderHandicaps(box){
         <label>ยิงลูกพิเศษ ⭐ (แต้ม/คน)</label><input type="number" class="hc-special" value="${hc.special}">
         <label>ยิงแย่งเลขคนอื่น (แต้ม)</label><input type="number" class="hc-steal" value="${hc.steal}">
         <label>ลูกขาวลง/ตกโต๊ะ เสีย (แต้ม/คน)</label><input type="number" class="hc-scratch" value="${hc.scratch}">
+        <label>โบนัสลูกเหลือ (แต้ม/คน · เลขละ)</label><input type="number" class="hc-leftover" value="${hc.leftover}">
         <label>จำกัดยิงติดกัน (ครั้ง · เว้นว่าง = ตามวง)</label><input type="number" class="hc-cont" min="1" value="${hc.contLimit||''}">
         <div class="spacer"></div>
         <button class="btn-ghost hc-reset" style="width:100%">↺ คืนค่าปกติ</button>
@@ -750,6 +751,7 @@ function renderHandicaps(box){
     const upd=()=>{
       hc.own=numv(".hc-own",UNIT); hc.special=numv(".hc-special",UNIT);
       hc.steal=numv(".hc-steal",UNIT*2); hc.scratch=numv(".hc-scratch",UNIT);
+      hc.leftover=numv(".hc-leftover",UNIT*2);
       const cl=parseInt(row.querySelector(".hc-cont").value); hc.contLimit=(isNaN(cl)||cl<1)?null:cl;
       const tag=row.querySelector(".pill"); // อัปเดต badge "ต่อให้" สดๆ
       if(isCustomHC(hc) && !tag){ row.querySelector("b").insertAdjacentHTML("beforeend",' <span class="pill pos">ต่อให้</span>'); }
@@ -1071,8 +1073,10 @@ function renderShoot(){
   // โบนัสลูกเหลือ: แบนเนอร์ค้างไว้ให้เห็นชัดจนจบตา
   if(S.leftoverDone){
     const remLoCount=Object.values(S.balls).filter(b=>b.leftover && !b.shot).length;
+    const _lv=[...new Set(S.players.map(p=>p.hc.leftover))];
+    const _loTxt=_lv.length===1?`เลขละ ${_lv[0]} แต้มให้เจ้าของ`:`ตามค่าโบนัสลูกเหลือของเจ้าของ`;
     const banner=el(`<div class="card lo-banner center">
-      <div class="t">🪙 แจกแต้มเลขที่เหลือบนโต๊ะแล้ว (เลขละ ${UNIT*2} แต้มให้เจ้าของ)</div>
+      <div class="t">🪙 แจกแต้มเลขที่เหลือบนโต๊ะแล้ว (${_loTxt})</div>
       <div class="muted" style="margin-top:4px">${remLoCount?'ยิงเก็บแต้มต่อได้จนหมดโต๊ะ · เลขยังไม่เฉลย':'ยิงครบทุกลูกแล้ว'}</div>
     </div>`);
     A.appendChild(banner);
@@ -1149,6 +1153,7 @@ function renderShoot(){
       if(h.special!==UNIT) parts.push(`พิเศษ ${h.special}`);
       if(h.steal!==UNIT*2) parts.push(`แย่ง ${h.steal}`);
       if(h.scratch!==UNIT) parts.push(`ลูกขาว ${h.scratch}`);
+      if(h.leftover!==UNIT*2) parts.push(`โบนัสลูกเหลือ ${h.leftover}`);
       if(h.contLimit) parts.push(`ยิงติดกัน ≤ ${h.contLimit} ครั้ง`);
       return `<div style="padding:6px 0;border-bottom:1px solid var(--line)"><b>${esc(p.name)}</b> <span class="muted">${parts.join(" · ")}</span></div>`;
     }).join("");
@@ -1157,7 +1162,7 @@ function renderShoot(){
 
   // info + undo (ตาจบเองอัตโนมัติ ไม่มีปุ่มจบ)
   const endCard=el(`<div class="card">
-    <div class="hint">เมื่อลูกหลอกหมดโต๊ะ และลูกของผู้เล่นเหลือไม่เกิน ${S.cardsPer} ลูก (จำนวนไพ่ · ไม่นับลูกพิเศษ 14/15) จะเด้ง Popup แจกโบนัสเลขละ ${UNIT*2} แต้มให้เจ้าของ แล้วยิงเก็บแต้มต่อจนหมดโต๊ะ · ตาจะจบเองเมื่อหมดโต๊ะ หรือเหลือแต่ลูกหลอก</div>
+    <div class="hint">เมื่อลูกหลอกหมดโต๊ะ และลูกของผู้เล่นเหลือไม่เกิน ${S.cardsPer} ลูก (จำนวนไพ่ · ไม่นับลูกพิเศษ 14/15) จะเด้ง Popup แจกโบนัสลูกเหลือให้เจ้าของ (เลขละตามค่าโบนัสลูกเหลือของแต่ละคน · ปกติ ${UNIT*2}) แล้วยิงเก็บแต้มต่อจนหมดโต๊ะ · ตาจะจบเองเมื่อหมดโต๊ะ หรือเหลือแต่ลูกหลอก</div>
     <div class="spacer"></div>
     <button class="btn-ghost" id="undo" style="width:100%">↩ ยกเลิกการกระทำล่าสุด</button>
   </div>`);
@@ -1314,13 +1319,19 @@ function applyLeftover(){
   const L=owned.length;
   const cnt=S.players.map(()=>0);
   owned.forEach(b=>{ b.leftover=true; cnt[b.owner]++; });
+  // โบนัสลูกเหลือใช้ค่า "ต่อให้" ของเจ้าของแต่ละคน (เลขละ bonusOf(owner) จากทุกคน)
+  const bonusOf=(i)=>S.players[i].hc.leftover;
+  let totalBonus=0;
+  owned.forEach(b=>{ totalBonus += bonusOf(b.owner); });
   // หักลบแต้มแบบ pairwise (ไม่เฉลยว่าเลขไหนเป็นของใคร)
-  owned.forEach(b=>{ S.players.forEach((p,j)=>transfer(b.owner,j,UNIT*2)); });
+  owned.forEach(b=>{ const bn=bonusOf(b.owner); S.players.forEach((p,j)=>transfer(b.owner,j,bn)); });
   // log: รวมต่อคน ไม่บอกเลข
-  S.log.push(`— แจกแต้มเลขที่เหลือบนโต๊ะ ${L} ลูก (เลขละ ${UNIT*2} แต้ม · ยังไม่เฉลยเลข) —`);
-  S.players.forEach((p,i)=>{ if(cnt[i]>0) S.log.push(`[ลูกเหลือ] ${p.name} เหลือ ${cnt[i]} เลขบนโต๊ะ → ได้ ${cnt[i]*UNIT*2} แต้มจากทุกคน`); });
+  const bvals=[...new Set(owned.map(b=>bonusOf(b.owner)))];
+  const perTxt=bvals.length===1?`เลขละ ${bvals[0]} แต้ม`:`เลขละตามค่าต่อให้ของเจ้าของ`;
+  S.log.push(`— แจกแต้มเลขที่เหลือบนโต๊ะ ${L} ลูก (${perTxt} · ยังไม่เฉลยเลข) —`);
+  S.players.forEach((p,i)=>{ if(cnt[i]>0) S.log.push(`[ลูกเหลือ] ${p.name} เหลือ ${cnt[i]} เลขบนโต๊ะ → ได้ ${cnt[i]*bonusOf(i)} แต้มจากทุกคน`); });
   // popup: ยอดสุทธิต่อคน (ใครได้/เสียเท่าไร) ยังไม่เฉลยเลข
-  return S.players.map((p,i)=>({name:p.name, net: cnt[i]*UNIT*2*(S.P-1) - (L-cnt[i])*UNIT*2}));
+  return S.players.map((p,i)=>({name:p.name, net: cnt[i]*bonusOf(i)*S.P - totalBonus}));
 }
 function burstConfetti(n){
   const colors=["#eab308","#f4c20d","#22c55e","#3b82f6","#ef4444","#fff3c4","#a855f7"];
@@ -1346,7 +1357,7 @@ function showLeftoverPopup(info){
   const ov=el(`<div class="overlay lo-ov"><div class="overlay-box lo-ovbox">
     <div class="lo-coin">🪙</div>
     <h2>✨ แต้มพิเศษ — เลขที่เหลือบนโต๊ะ ✨</h2>
-    <p>ลูกบนโต๊ะเหลือเท่าจำนวนไพ่ · <b>ยังไม่เฉลยเลข</b><br>แจกโบนัสเลขละ ${UNIT*2} แต้มให้เจ้าของก่อน (ยอดสุทธิด้านล่าง) แล้วยิงเก็บแต้มต่อจนหมดโต๊ะ</p>
+    <p>ลูกบนโต๊ะเหลือเท่าจำนวนไพ่ · <b>ยังไม่เฉลยเลข</b><br>แจกโบนัสลูกเหลือให้เจ้าของก่อน (ยอดสุทธิด้านล่าง) แล้วยิงเก็บแต้มต่อจนหมดโต๊ะ</p>
     <div class="lo-list">${rows}</div>
     <button class="btn-primary" id="loBtn">ตกลง — บันทึกลงบันทึกการยิง</button>
   </div></div>`);
