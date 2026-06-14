@@ -1476,12 +1476,18 @@ function renderScoreCard(){
 /* ============================================================
    SCREEN 4: RESULT
 ============================================================ */
-function renderResult(){
-  const A=app(); A.innerHTML="";
-  A.appendChild(el(`<div class="card center"><h2>🏁 สรุปผลตานี้</h2>
-    <div class="muted">หยิบคนละ ${S.cardsPer} ใบ · ${S.P} คน</div></div>`));
-
-  // net ranking
+let resultTab="round";   // ตานี้ | รวมทั้งรอบ
+/* เริ่มตาใหม่ทันทีด้วยวงเดิม (ผู้เล่น/ต่อให้/ตั้งค่าเดิม) ไม่ต้องกลับไปหน้าตั้งวง */
+function startNextRound(){
+  const players=S.players.map(p=>({name:p.name, hc:Object.assign({},p.hc)}));
+  const cardsPer=S.cardsPer, contMode=S.contMode, contLimit=S.contLimit, dealMode=S.dealMode;
+  S=newGameState(players, cardsPer, contMode, contLimit, dealMode);
+  if(S.dealMode==="random") dealHands();
+  entryGateOpen=false;
+  renderEntry();
+}
+/* รายละเอียดของ "ตานี้" (อันดับ + ใครได้จากใคร + บันทึก) */
+function renderRoundDetail(box){
   const rank=el(`<div class="card"><h2>อันดับ (แต้มสุทธิ)</h2><div id="r"></div></div>`);
   let html=`<table><tr><th>#</th><th>ผู้เล่น</th><th>สุทธิ</th></tr>`;
   S.players.map((p,i)=>({name:p.name,net:netOf(i)}))
@@ -1491,9 +1497,8 @@ function renderResult(){
         <td class="${r.net>0?'pos':r.net<0?'neg':''}">${r.net>0?'+':''}${r.net}</td></tr>`;
     });
   html+=`</table>`; rank.querySelector("#r").innerHTML=html;
-  A.appendChild(rank);
+  box.appendChild(rank);
 
-  // pairwise: who got from whom (net)
   const pw=el(`<div class="card"><h2>ใครได้จากใคร (หักลบแล้ว)</h2><div id="p"></div></div>`);
   let lines="";
   for(let i=0;i<S.P;i++){
@@ -1510,29 +1515,69 @@ function renderResult(){
   }
   if(!lines) lines=`<div class="muted">ไม่มีการได้แต้มสุทธิ</div>`;
   pw.querySelector("#p").innerHTML=lines;
-  A.appendChild(pw);
+  box.appendChild(pw);
 
-  // log
   if(S.log.length){
-    const lc=el(`<div class="card"><h2>บันทึกทั้งหมด</h2><div class="log">${logHTML(S.log)}</div></div>`);
-    A.appendChild(lc);
+    box.appendChild(el(`<div class="card"><h2>บันทึกทั้งตา</h2><div class="log">${logHTML(S.log)}</div></div>`));
   }
+}
+/* สรุป "รวมทั้งรอบ" (สะสมหลายตา) — อ่านจาก session */
+function renderSessionSummary(box){
+  const ses=loadSession();
+  const names=Object.keys(ses.players);
+  box.appendChild(el(`<div class="card"><div class="hint">เริ่มรอบเมื่อ ${fmtDate(ses.started)} · สะสมทุกตาจนกว่าจะกดเคลียร์</div></div>`));
+  if(!names.length){ box.appendChild(el(`<div class="card center muted">ยังไม่มีข้อมูล</div>`)); return; }
+  const rows=names.map(n=>({n, ...ses.players[n]})).sort((a,b)=>b.net-a.net);
+  let html=`<table><tr><th>ผู้เล่น</th><th>ตา</th><th>ชนะ</th><th>สุทธิ</th></tr>`;
+  rows.forEach(r=>{ html+=`<tr><td>${esc(r.n)}</td><td>${r.played}</td><td>${r.wins}</td>
+    <td class="${r.net>0?'pos':r.net<0?'neg':''}">${r.net>0?'+':''}${r.net}</td></tr>`; });
+  html+=`</table>`;
+  box.appendChild(el(`<div class="card"><h2>ยอดสะสมทั้งรอบ</h2>${html}</div>`));
+  const settle=settlement(ses.pairs);
+  if(settle.length){
+    const s=settle.map(x=>`<div style="padding:7px 0;border-bottom:1px solid var(--line)">
+      <b>${esc(x.from)}</b> เสียแต้ม <b>${esc(x.to)}</b> <span class="pill pos">${x.amt}</span></div>`).join("");
+    box.appendChild(el(`<div class="card"><h2>ใครเสียแต้มใคร (หักลบทั้งรอบ)</h2>${s}</div>`));
+  }
+}
+function renderResult(){
+  const A=app(); A.innerHTML="";
+  A.appendChild(el(`<div class="card center"><h2>🏁 จบตาแล้ว</h2>
+    <div class="muted">หยิบคนละ ${S.cardsPer} ใบ · ${S.P} คน</div></div>`));
 
-  const done=el(`<div class="card">
-    <div class="reveal" style="color:var(--accent)">✔ บันทึกลง “ประวัติรอบนี้” และ “Hall of Fame” แล้ว</div>
-    <button class="btn-primary" id="again">เล่นตาต่อไป (วงเดิม) ▶</button>
-    <div class="spacer"></div>
-    <button class="btn-ghost" id="seeSes" style="width:100%">📅 ดูยอดรอบนี้ / ใครเสียแต้มใคร</button>
+  // เล่นตาต่อไปได้เลย (วงเดิม) — ไว้บนสุด กดง่าย
+  const next=el(`<div class="card">
+    <button class="btn-primary" id="again" style="width:100%">▶ เล่นตาต่อไป (วงเดิม)</button>
+    <div class="hint" style="text-align:center;margin-top:8px;color:var(--accent)">✔ บันทึกลง “ประวัติรอบนี้” และ Hall of Fame แล้ว</div>
   </div>`);
-  A.appendChild(done);
-  done.querySelector("#again").addEventListener("click",()=>{
-    S=null; entryGateOpen=false; homeTab="play";
-    renderSetup();
-  });
-  done.querySelector("#seeSes").addEventListener("click",()=>{
-    S=null; entryGateOpen=false; homeTab="session";
-    renderSetup();
-  });
+  A.appendChild(next);
+  next.querySelector("#again").addEventListener("click",startNextRound);
+
+  // สลับดู ตานี้ / รวมทั้งรอบ
+  const seg=el(`<div class="seg" id="resSeg" style="margin-bottom:12px">
+    <button data-t="round">สรุปตานี้</button>
+    <button data-t="session">รวมทั้งรอบ</button>
+  </div>`);
+  A.appendChild(seg);
+  const body=el(`<div id="resBody"></div>`);
+  A.appendChild(body);
+  const paint=()=>{
+    seg.querySelectorAll("button").forEach(b=>b.classList.toggle("on",b.dataset.t===resultTab));
+    body.innerHTML="";
+    if(resultTab==="round") renderRoundDetail(body); else renderSessionSummary(body);
+  };
+  seg.querySelectorAll("button").forEach(b=>b.addEventListener("click",()=>{ resultTab=b.dataset.t; paint(); }));
+  paint();
+
+  // ทางออกอื่น
+  const nav=el(`<div class="card">
+    <button class="btn-ghost" id="goSes" style="width:100%">📅 ไปหน้า “รอบนี้” (ดูละเอียด/เคลียร์ยอด)</button>
+    <div class="spacer"></div>
+    <button class="btn-ghost" id="goHome" style="width:100%">🏠 กลับหน้าตั้งวง</button>
+  </div>`);
+  A.appendChild(nav);
+  nav.querySelector("#goSes").addEventListener("click",()=>{ S=null; entryGateOpen=false; homeTab="session"; renderSetup(); });
+  nav.querySelector("#goHome").addEventListener("click",()=>{ S=null; entryGateOpen=false; homeTab="play"; renderSetup(); });
 }
 
 /* ---------------- boot ---------------- */
