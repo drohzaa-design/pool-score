@@ -349,6 +349,18 @@ function cloudPush(){
     }catch(e){ console.warn("cloud push failed", e); }
   }, 600);
 }
+/* เขียนทับคลาวด์ด้วยข้อมูลในเครื่องแบบเด็ดขาด (ไม่ merge) — ใช้ตอน "ลบผู้เล่น" ที่ตั้งใจลบจริง
+   เพื่อไม่ให้ตัว merge ดึงคนที่เพิ่งลบกลับมา */
+async function cloudOverwrite(){
+  if(!_cloudOK) return;
+  clearTimeout(_pushTimer); // ยกเลิก push แบบ merge ที่ค้างอยู่
+  try{
+    const data=localSnapshot();
+    if(isEmptyData(data)) return; // ไม่ล้างคลาวด์ให้ว่างเด็ดขาด
+    data.updatedAt=firebase.firestore.FieldValue.serverTimestamp();
+    await _cloudDoc.set(data); // แทนที่ทั้งเอกสาร
+  }catch(e){ console.warn("cloud overwrite failed", e); }
+}
 function cloudListen(){
   if(!_cloudOK) return;
   _cloudDoc.onSnapshot(snap=>{
@@ -569,17 +581,8 @@ function renderPlayTab(A){
     names.forEach(nm=>{
       const on=setupSelected.includes(nm);
       const order=on?(setupSelected.indexOf(nm)+1)+". ":"";
-      const ch=el(`<span class="chip ${on?'on':''}">${order}${esc(nm)}
-        <span class="x" title="ลบถาวร">✕</span></span>`);
+      const ch=el(`<span class="chip ${on?'on':''}">${order}${esc(nm)}</span>`);
       ch.addEventListener("click",e=>{
-        if(e.target.classList.contains("x")){
-          if(confirm(`ลบ "${nm}" ออกจากระบบถาวร? (สถิติทุกส่วนของคนนี้จะหายด้วย)`)){
-            deletePlayer(nm);
-            setupSelected=setupSelected.filter(n=>n!==nm);
-            renderChips(); updateCnt();
-          }
-          return;
-        }
         if(on) setupSelected=setupSelected.filter(n=>n!==nm);
         else setupSelected.push(nm);
         renderChips(); updateCnt();
@@ -716,6 +719,36 @@ function appendHOFReset(A){
     if(confirm("ล้างสถิติ Hall of Fame ทั้งหมดถาวร?")){ resetHOF(); hofOpen=null; renderSetup(); }
   });
 }
+function appendPlayerManage(A){
+  const card=el(`<div class="card">
+    <button class="btn-ghost" id="mgToggle" style="width:100%">🗑️ จัดการผู้เล่น (ลบรายชื่อ)</button>
+    <div id="mgBox" style="display:none;margin-top:10px"></div>
+  </div>`);
+  A.appendChild(card);
+  const box=card.querySelector("#mgBox");
+  card.querySelector("#mgToggle").addEventListener("click",()=>{
+    box.style.display = box.style.display==="none" ? "block" : "none";
+  });
+  const names=loadNames();
+  if(!names.length){ box.innerHTML=`<div class="muted">ยังไม่มีผู้เล่น</div>`; return; }
+  box.innerHTML=`<div class="hint">ลบผู้เล่นถาวร — สถิติทุกส่วนของคนนั้นจะหายทั้งในเครื่องและบนคลาวด์</div>`;
+  names.forEach(nm=>{
+    const row=el(`<div class="row" style="justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)">
+      <span>${esc(nm)}</span>
+      <button class="btn-danger mg-del" style="width:auto;padding:6px 16px">ลบ</button>
+    </div>`);
+    row.querySelector(".mg-del").addEventListener("click",()=>{
+      if(confirm(`ลบ "${nm}" ออกจากระบบถาวร?\n(สถิติทุกส่วนของคนนี้จะหายด้วย ทั้งในเครื่องและบนคลาวด์)`)){
+        deletePlayer(nm);
+        cloudOverwrite();
+        setupSelected=setupSelected.filter(n=>n!==nm);
+        if(hofOpen===nm) hofOpen=null;
+        renderSetup();
+      }
+    });
+    box.appendChild(row);
+  });
+}
 function renderHOFTab(A){
   const hof=loadHOF();
   const entries=Object.entries(hof.players);
@@ -723,7 +756,7 @@ function renderHOFTab(A){
     <div class="hint">สถิติสะสมตั้งแต่ ${fmtDate(hof.since)}</div></div>`));
   if(!entries.length){
     A.appendChild(el(`<div class="card center muted">ยังไม่มีสถิติ — เล่นจบตาแรกแล้วจะเริ่มเก็บ</div>`));
-    appendHOFReset(A); return;
+    appendPlayerManage(A); appendHOFReset(A); return;
   }
   const metric={
     net:h=>h.totalNet, wins:h=>h.wins,
@@ -761,6 +794,7 @@ function renderHOFTab(A){
   });
 
   A.appendChild(renderLeaders(entries));
+  appendPlayerManage(A);
   appendHOFReset(A);
 }
 
