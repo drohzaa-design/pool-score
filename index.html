@@ -177,6 +177,10 @@ const BALL=[null,
   {c:"#7a1f2b",t:"st"}  // 15 แดงเลือดหมูลาย
 ];
 
+/* หน่วยแต้มต่อ 1 ลูก (คูณทุกแต้มด้วยค่านี้)
+   เลขตัวเอง/พิเศษ = UNIT · แย่งเลขคนอื่น = UNIT×2 · ลูกขาว = เสีย UNIT · โบนัสลูกเหลือ = เลขละ UNIT×2 */
+const UNIT=20;
+
 /* ---------------- storage (localStorage + in-memory fallback) ----------------
    3 ส่วน: รายชื่อผู้เล่น / ประวัติรอบนี้ (session) / Hall of Fame (lifetime) */
 const K_NAMES="pool_names_v1", K_SES="pool_session_v1", K_HOF="pool_hof_v1";
@@ -904,7 +908,7 @@ function renderShoot(){
   if(S.leftoverDone){
     const remLoCount=Object.values(S.balls).filter(b=>b.leftover && !b.shot).length;
     const banner=el(`<div class="card lo-banner center">
-      <div class="t">🪙 แจกแต้มเลขที่เหลือบนโต๊ะแล้ว (เลขละ 2 แต้มให้เจ้าของ)</div>
+      <div class="t">🪙 แจกแต้มเลขที่เหลือบนโต๊ะแล้ว (เลขละ ${UNIT*2} แต้มให้เจ้าของ)</div>
       <div class="muted" style="margin-top:4px">${remLoCount?'ยิงเก็บแต้มต่อได้จนหมดโต๊ะ · เลขยังไม่เฉลย':'ยิงครบทุกลูกแล้ว'}</div>
     </div>`);
     A.appendChild(banner);
@@ -945,7 +949,7 @@ function renderShoot(){
   // miss / skip turn + ลูกขาว (scratch)
   const skip=el(`<div class="card">
     <button class="btn-ghost" id="skip" style="width:100%">⏭ ยิงพลาด / ข้ามไปคนถัดไป</button>
-    <button class="btn-ghost foul-btn" id="scratch" style="width:100%;margin-top:8px">⚪ ลูกขาวลง / ตกโต๊ะ — เสีย 1 แต้มให้ทุกคน</button>
+    <button class="btn-ghost foul-btn" id="scratch" style="width:100%;margin-top:8px">⚪ ลูกขาวลง / ตกโต๊ะ — เสีย ${UNIT} แต้มให้ทุกคน</button>
   </div>`);
   A.appendChild(skip);
   skip.querySelector("#skip").addEventListener("click",()=>{
@@ -970,7 +974,7 @@ function renderShoot(){
 
   // info + undo (ตาจบเองอัตโนมัติ ไม่มีปุ่มจบ)
   const endCard=el(`<div class="card">
-    <div class="hint">เมื่อลูกหลอกหมดโต๊ะ และลูกของผู้เล่นเหลือไม่เกิน ${S.cardsPer} ลูก (จำนวนไพ่ · ไม่นับลูกพิเศษ 14/15) จะเด้ง Popup แจกโบนัสเลขละ 2 แต้มให้เจ้าของ แล้วยิงเก็บแต้มต่อจนหมดโต๊ะ · ตาจะจบเองเมื่อหมดโต๊ะ หรือเหลือแต่ลูกหลอก</div>
+    <div class="hint">เมื่อลูกหลอกหมดโต๊ะ และลูกของผู้เล่นเหลือไม่เกิน ${S.cardsPer} ลูก (จำนวนไพ่ · ไม่นับลูกพิเศษ 14/15) จะเด้ง Popup แจกโบนัสเลขละ ${UNIT*2} แต้มให้เจ้าของ แล้วยิงเก็บแต้มต่อจนหมดโต๊ะ · ตาจะจบเองเมื่อหมดโต๊ะ หรือเหลือแต่ลูกหลอก</div>
     <div class="spacer"></div>
     <button class="btn-ghost" id="undo" style="width:100%">↩ ยกเลิกการกระทำล่าสุด</button>
   </div>`);
@@ -990,15 +994,15 @@ function applyPotScore(n, sh){
   b.shot=true; b.shotBy=sh;
   let msg="";
   if(b.type==="special"){
-    S.players.forEach((p,j)=>transfer(sh,j,1));
-    msg=`ยิงลูก ${n} = แต้มพิเศษ ⭐ ลง → ได้ 1 แต้มจากทุกคน`;
+    S.players.forEach((p,j)=>transfer(sh,j,UNIT));
+    msg=`ยิงลูก ${n} = แต้มพิเศษ ⭐ ลง → ได้ ${UNIT} แต้มจากทุกคน`;
   } else if(b.type==="owned"){
     if(b.owner===sh){
-      S.players.forEach((p,j)=>transfer(sh,j,1));
-      msg=`ยิงลูก ${n} = เลขของตัวเองลง → ได้ 1 แต้มจากทุกคน`;
+      S.players.forEach((p,j)=>transfer(sh,j,UNIT));
+      msg=`ยิงลูก ${n} = เลขของตัวเองลง → ได้ ${UNIT} แต้มจากทุกคน`;
     } else {
-      transfer(sh,b.owner,2);
-      msg=`ยิงลูก ${n} = เลขของ ${S.players[b.owner].name} ลง → ได้ 2 แต้มจาก ${S.players[b.owner].name}`;
+      transfer(sh,b.owner,UNIT*2);
+      msg=`ยิงลูก ${n} = เลขของ ${S.players[b.owner].name} ลง → ได้ ${UNIT*2} แต้มจาก ${S.players[b.owner].name}`;
     }
   } else {
     msg=`ยิงลูก ${n} = ลูกหลอก 🫥 ลง → ไม่มีแต้ม`;
@@ -1006,20 +1010,20 @@ function applyPotScore(n, sh){
   return msg;
 }
 
-/* ลูกขาวลงหลุม / ตกออกนอกโต๊ะ: ผู้ยิงเสีย 1 แต้มให้ทุกคน (คนละ 1) แล้วเปลี่ยนคน */
+/* ลูกขาวลงหลุม / ตกออกนอกโต๊ะ: ผู้ยิงเสีย UNIT แต้มให้ทุกคน (คนละ UNIT) แล้วเปลี่ยนคน */
 function applyScratch(sh){
-  S.players.forEach((p,j)=>{ if(j!==sh) transfer(j,sh,1); });
-  return `⚪ ลูกขาวลง/ตกโต๊ะ → เสีย 1 แต้มให้ทุกคน`;
+  S.players.forEach((p,j)=>{ if(j!==sh) transfer(j,sh,UNIT); });
+  return `⚪ ลูกขาวลง/ตกโต๊ะ → เสีย ${UNIT} แต้มให้ทุกคน`;
 }
 
 /* popup เด้งทุกครั้งที่ยิงลูก -> เห็นชัดว่าลูกของใคร / หลอก / พิเศษ */
 function showShotPopup(d, after){
   const K={
-    own:{cls:"k-own", icon:"✅", label:"เลขของตัวเอง", pts:"ได้ 1 แต้มจากทุกคน"},
-    steal:{cls:"k-steal", icon:"🎯", label:`เลขของ ${esc(d.ownerName)}`, pts:`ได้ 2 แต้มจาก ${esc(d.ownerName)}`},
-    special:{cls:"k-special", icon:"⭐", label:"ลูกพิเศษ", pts:"ได้ 1 แต้มจากทุกคน"},
+    own:{cls:"k-own", icon:"✅", label:"เลขของตัวเอง", pts:`ได้ ${UNIT} แต้มจากทุกคน`},
+    steal:{cls:"k-steal", icon:"🎯", label:`เลขของ ${esc(d.ownerName)}`, pts:`ได้ ${UNIT*2} แต้มจาก ${esc(d.ownerName)}`},
+    special:{cls:"k-special", icon:"⭐", label:"ลูกพิเศษ", pts:`ได้ ${UNIT} แต้มจากทุกคน`},
     decoy:{cls:"k-decoy", icon:"🫥", label:"ลูกหลอก", pts:"ไม่มีแต้ม"},
-    scratch:{cls:"k-scratch", icon:"⚪", label:"ลูกขาวลง / ตกโต๊ะ", pts:"เสีย 1 แต้มให้ทุกคน"}
+    scratch:{cls:"k-scratch", icon:"⚪", label:"ลูกขาวลง / ตกโต๊ะ", pts:`เสีย ${UNIT} แต้มให้ทุกคน`}
   }[d.kind];
   let ballHTML;
   if(d.kind==="scratch"){
@@ -1070,7 +1074,7 @@ function shootBall(n){
 }
 
 /* แจกโบนัสลูกเหลือ: เมื่อลูกหลอกหมดโต๊ะแล้ว และลูกของผู้เล่นเหลือไม่เกินจำนวนไพ่
-   (ไม่นับลูกพิเศษ 14/15) -> เจ้าของแต่ละลูกได้เลขละ 2 แต้มจากทุกคน (ครั้งเดียว)
+   (ไม่นับลูกพิเศษ 14/15) -> เจ้าของแต่ละลูกได้เลขละ UNIT×2 แต้มจากทุกคน (ครั้งเดียว)
    แล้วเล่นต่อยิงเก็บแต้มปกติจนหมดโต๊ะ
    คืนค่ารายการแจกแต้ม (ไว้ขึ้น popup) หรือ null ถ้ายังไม่ถึงจุดแจก */
 function applyLeftover(){
@@ -1085,12 +1089,12 @@ function applyLeftover(){
   const cnt=S.players.map(()=>0);
   owned.forEach(b=>{ b.leftover=true; cnt[b.owner]++; });
   // หักลบแต้มแบบ pairwise (ไม่เฉลยว่าเลขไหนเป็นของใคร)
-  owned.forEach(b=>{ S.players.forEach((p,j)=>transfer(b.owner,j,2)); });
+  owned.forEach(b=>{ S.players.forEach((p,j)=>transfer(b.owner,j,UNIT*2)); });
   // log: รวมต่อคน ไม่บอกเลข
-  S.log.push(`— แจกแต้มเลขที่เหลือบนโต๊ะ ${L} ลูก (เลขละ 2 แต้ม · ยังไม่เฉลยเลข) —`);
-  S.players.forEach((p,i)=>{ if(cnt[i]>0) S.log.push(`[ลูกเหลือ] ${p.name} เหลือ ${cnt[i]} เลขบนโต๊ะ → ได้ ${cnt[i]*2} แต้มจากทุกคน`); });
+  S.log.push(`— แจกแต้มเลขที่เหลือบนโต๊ะ ${L} ลูก (เลขละ ${UNIT*2} แต้ม · ยังไม่เฉลยเลข) —`);
+  S.players.forEach((p,i)=>{ if(cnt[i]>0) S.log.push(`[ลูกเหลือ] ${p.name} เหลือ ${cnt[i]} เลขบนโต๊ะ → ได้ ${cnt[i]*UNIT*2} แต้มจากทุกคน`); });
   // popup: ยอดสุทธิต่อคน (ใครได้/เสียเท่าไร) ยังไม่เฉลยเลข
-  return S.players.map((p,i)=>({name:p.name, net: cnt[i]*2*(S.P-1) - (L-cnt[i])*2}));
+  return S.players.map((p,i)=>({name:p.name, net: cnt[i]*UNIT*2*(S.P-1) - (L-cnt[i])*UNIT*2}));
 }
 function burstConfetti(n){
   const colors=["#eab308","#f4c20d","#22c55e","#3b82f6","#ef4444","#fff3c4","#a855f7"];
@@ -1116,7 +1120,7 @@ function showLeftoverPopup(info){
   const ov=el(`<div class="overlay lo-ov"><div class="overlay-box lo-ovbox">
     <div class="lo-coin">🪙</div>
     <h2>✨ แต้มพิเศษ — เลขที่เหลือบนโต๊ะ ✨</h2>
-    <p>ลูกบนโต๊ะเหลือเท่าจำนวนไพ่ · <b>ยังไม่เฉลยเลข</b><br>แจกโบนัสเลขละ 2 แต้มให้เจ้าของก่อน (ยอดสุทธิด้านล่าง) แล้วยิงเก็บแต้มต่อจนหมดโต๊ะ</p>
+    <p>ลูกบนโต๊ะเหลือเท่าจำนวนไพ่ · <b>ยังไม่เฉลยเลข</b><br>แจกโบนัสเลขละ ${UNIT*2} แต้มให้เจ้าของก่อน (ยอดสุทธิด้านล่าง) แล้วยิงเก็บแต้มต่อจนหมดโต๊ะ</p>
     <div class="lo-list">${rows}</div>
     <button class="btn-primary" id="loBtn">ตกลง — บันทึกลงบันทึกการยิง</button>
   </div></div>`);
