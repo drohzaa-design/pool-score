@@ -399,7 +399,7 @@ async function cloudBoot(){
 
 /* ---------------- game state ---------------- */
 let S = null;
-function newGameState(players, cardsPer, contMode, contLimit){
+function newGameState(players, cardsPer, contMode, contLimit, dealMode){
   players = players.map(p=>({name:p.name, hc:Object.assign(defaultHC(), p.hc||{})}));
   const P=players.length;
   const ledger=Array.from({length:P},()=>Array(P).fill(0));
@@ -414,6 +414,7 @@ function newGameState(players, cardsPer, contMode, contLimit){
     phase:"entry", entryIndex:0,
     firstShooter:0, order:Array.from({length:P},(_,i)=>i), actions:[],
     contMode:contMode||"unlimited", contLimit:contLimit||1,
+    dealMode:dealMode||"manual",
     log:[], finished:false, leftoverDone:false
   };
 }
@@ -550,6 +551,7 @@ let setupSelected=[]; // names chosen for this round (order = seating)
 let setupCards=3;
 let setupContMode="unlimited"; // "unlimited" | "limited"
 let setupContLimit=3;          // max consecutive pots when limited
+let setupDealMode="random";    // "random" = ระบบสุ่มแจกเลข · "manual" = กรอกเลขเอง
 let setupHC={};                // ต่อให้รายคน keyed by name -> {own,special,steal,scratch,contLimit}
 let hcOpen=new Set();          // ชื่อที่กางแผง "ต่อให้" อยู่
 
@@ -626,8 +628,28 @@ function renderPlayTab(A){
   A.appendChild(c2);
   c2.querySelector("#cards").addEventListener("input",e=>setupCards=parseInt(e.target.value)||0);
 
+  const c2d=el(`<div class="card">
+    <h2>3. วิธีแจกเลข</h2>
+    <div class="seg" id="dealSeg">
+      <button data-m="random">🎲 ระบบสุ่มแจก</button>
+      <button data-m="manual">✍️ กรอกเลขเอง</button>
+    </div>
+    <div class="hint" id="dealHint"></div>
+  </div>`);
+  A.appendChild(c2d);
+  const dealSeg=c2d.querySelector("#dealSeg");
+  const dealHint=c2d.querySelector("#dealHint");
+  function paintDeal(){
+    dealSeg.querySelectorAll("button").forEach(b=>b.classList.toggle("on",b.dataset.m===setupDealMode));
+    dealHint.textContent = setupDealMode==="random"
+      ? "ระบบสุ่มเลขให้อัตโนมัติ แล้วส่งเครื่องให้แต่ละคนแอบดูเลขของตัวเอง (ไม่ต้องใช้ไพ่)"
+      : "หยิบไพ่จริง แล้วส่งเครื่องให้แต่ละคนกรอกเลขของตัวเอง";
+  }
+  dealSeg.querySelectorAll("button").forEach(b=>b.addEventListener("click",()=>{ setupDealMode=b.dataset.m; paintDeal(); }));
+  paintDeal();
+
   const c2b=el(`<div class="card">
-    <h2>3. ยิงลงแล้วได้ยิงต่อ?</h2>
+    <h2>4. ยิงลงแล้วได้ยิงต่อ?</h2>
     <div class="seg" id="contSeg">
       <button data-m="unlimited">ไม่จำกัด</button>
       <button data-m="limited">จำกัดจำนวนติดกัน</button>
@@ -649,7 +671,7 @@ function renderPlayTab(A){
   paintCont();
 
   const c2c=el(`<div class="card">
-    <h2>4. ต่อให้รายคน <span class="pill">ไม่ตั้งก็ได้</span></h2>
+    <h2>5. ต่อให้รายคน <span class="pill">ไม่ตั้งก็ได้</span></h2>
     <div class="hint">ปรับแต้ม/กติกาเฉพาะบางคน เช่น คนเก่งยิงแย่งเลขได้น้อยลง หรือยิงติดกันได้จำกัด · ทุกแต้มยึดค่าของคนยิง</div>
     <div id="hcBox" style="margin-top:10px"></div>
   </div>`);
@@ -658,7 +680,7 @@ function renderPlayTab(A){
   renderHandicaps(hcBox);
 
   const c3=el(`<div class="card">
-    <button class="btn-primary" id="start">เริ่มกรอกไพ่ ▶</button>
+    <button class="btn-primary" id="start">เริ่มเกม ▶</button>
     <div class="err" id="startErr"></div>
   </div>`);
   A.appendChild(c3);
@@ -669,7 +691,8 @@ function renderPlayTab(A){
     const total=setupSelected.length*setupCards;
     if(total>13){ err.textContent=`รวม ${total} ใบ เกิน 13 (ลดจำนวนคนหรือไพ่ต่อคน)`; return; }
     if(setupContMode==="limited" && (!setupContLimit||setupContLimit<1)){ err.textContent="กรอกจำนวนยิงติดกันสูงสุด"; return; }
-    S=newGameState(setupSelected.map(n=>({name:n, hc:setupHC[n]})), setupCards, setupContMode, setupContLimit);
+    S=newGameState(setupSelected.map(n=>({name:n, hc:setupHC[n]})), setupCards, setupContMode, setupContLimit, setupDealMode);
+    if(S.dealMode==="random") dealHands();
     renderEntry();
   });
 }
@@ -875,6 +898,7 @@ function renderEntry(){
     S.phase="shoot"; renderShoot(); return;
   }
   const name=S.players[i].name;
+  const isRandom=S.dealMode==="random";
 
   if(!entryGateOpen){
     const g=el(`<div class="card gate">
@@ -882,10 +906,30 @@ function renderEntry(){
       <div class="name">${esc(name)}</div>
       <div class="muted">คนอื่นอย่าแอบดูนะ 🙈</div>
       <div class="spacer"></div><div class="spacer"></div>
-      <button class="btn-primary" id="open">เริ่มกรอกไพ่ของฉัน</button>
+      <button class="btn-primary" id="open">${isRandom?"ดูเลขของฉัน 👀":"เริ่มกรอกไพ่ของฉัน"}</button>
     </div>`);
     A.appendChild(g);
     g.querySelector("#open").addEventListener("click",()=>{ entryGateOpen=true; renderEntry(); });
+    return;
+  }
+
+  if(isRandom){
+    // ระบบสุ่มแจกแล้ว (dealHands) — แค่เฉลยเลขของตัวเองแบบอ่านอย่างเดียว
+    const hand=S.hands[i].slice().sort((a,b)=>a-b);
+    const balls=hand.map(n=>ballHTML(n)).join("");
+    const r=el(`<div class="card">
+      <h2>เลขของ ${esc(name)} <span class="pill">${S.cardsPer} ใบ</span></h2>
+      <div class="hint">จำเลขของตัวเองให้ดี แล้วกดซ่อนก่อนส่งเครื่องต่อ</div>
+      <div class="spacer"></div>
+      <div class="reveal-balls" style="display:flex;flex-wrap:wrap;gap:14px;justify-content:center;margin:10px 0">${balls}</div>
+      <div class="spacer"></div>
+      <button class="btn-primary" id="confirm">จำได้แล้ว ซ่อน 🔒</button>
+    </div>`);
+    A.appendChild(r);
+    r.querySelector("#confirm").addEventListener("click",()=>{
+      S.entryIndex++; entryGateOpen=false;
+      renderEntry();
+    });
     return;
   }
 
@@ -922,6 +966,22 @@ function renderEntry(){
 }
 function buildOwners(){
   S.hands.forEach((h,idx)=>{ h.forEach(n=>{ S.balls[n].type="owned"; S.balls[n].owner=idx; }); });
+}
+/* สุ่มแจกเลข 1–13 ให้ผู้เล่นคนละ cardsPer ใบ (ไม่ซ้ำกัน) */
+function dealHands(){
+  const need=S.P*S.cardsPer;
+  const pool=shuffle(Array.from({length:13},(_,i)=>i+1)).slice(0,need);
+  for(let i=0;i<S.P;i++){
+    S.hands[i]=pool.slice(i*S.cardsPer,(i+1)*S.cardsPer).sort((a,b)=>a-b);
+  }
+}
+/* markup ของลูก 1 ลูก (ใช้ซ้ำในจอเฉลยเลขของตัวเอง) */
+function ballHTML(n, extraCls){
+  const def=BALL[n];
+  const style=def.t==="st"?"":`background:${def.c}`;
+  const inner=(def.t==="st"?`<div class="band" style="background:${def.c}"></div>`:"")+`<div class="shine"></div><div class="num">${n}</div>`;
+  const cls="ball"+(def.t==="st"?" stripe":"")+(extraCls?(" "+extraCls):"");
+  return `<div class="${cls}" style="${style}">${inner}</div>`;
 }
 
 /* ============================================================
