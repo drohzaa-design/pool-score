@@ -412,7 +412,7 @@ function newGameState(players, cardsPer, contMode, contLimit){
     players, cardsPer, P, ledger, balls,
     hands:players.map(()=>[]),  // numbers per player
     phase:"entry", entryIndex:0,
-    firstShooter:0, actions:[],
+    firstShooter:0, order:Array.from({length:P},(_,i)=>i), actions:[],
     contMode:contMode||"unlimited", contLimit:contLimit||1,
     log:[], finished:false, leftoverDone:false
   };
@@ -422,6 +422,8 @@ function transfer(r,g,amt){
   S.ledger[r][g]+=amt; S.ledger[g][r]-=amt;
 }
 function netOf(i){ return S.ledger[i].reduce((a,b)=>a+b,0); }
+/* สับลำดับ (Fisher-Yates) — คืน array ใหม่ */
+function shuffle(arr){ const a=arr.slice(); for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; }
 
 /* ---------------- helpers ---------------- */
 const $=sel=>document.querySelector(sel);
@@ -865,9 +867,10 @@ let entryGateOpen=false;
 function renderEntry(){
   const A=app(); A.innerHTML="";
   const i=S.entryIndex;
-  if(i>=S.P){ // done -> build owners, randomize first shooter, then shoot
+  if(i>=S.P){ // done -> build owners, สุ่มลำดับการเล่นทั้งหมด, then shoot
     buildOwners();
-    S.firstShooter=Math.floor(Math.random()*S.P);
+    S.order=shuffle(S.players.map((_,k)=>k)); // สับลำดับทั้งวง ไม่ใช่แค่คนเริ่ม
+    S.firstShooter=S.order[0];                 // เผื่อโค้ดเก่าอ้างถึง
     S.actions=[]; S._lastReveal="";
     S.phase="shoot"; renderShoot(); return;
   }
@@ -933,37 +936,43 @@ function limitFor(i){
   return S.contMode==="limited" ? S.contLimit : 0;
 }
 function turnState(){
-  let sh=S.firstShooter, streak=0;
+  const order=(S.order&&S.order.length===S.P)?S.order:S.players.map((_,i)=>i);
+  const P=S.P;
+  let pos=0, streak=0; // เดินตามลำดับที่สุ่มไว้ (order) ไม่ใช่ลำดับที่นั่ง
   for(const a of S.actions){
-    if(a.miss||a.scratch){ sh=(sh+1)%S.P; streak=0; }
+    if(a.miss||a.scratch){ pos=(pos+1)%P; streak=0; }
     else {
       streak++;
-      const lim=limitFor(sh);
-      if(lim && streak>=lim){ sh=(sh+1)%S.P; streak=0; }
+      const lim=limitFor(order[pos]);
+      if(lim && streak>=lim){ pos=(pos+1)%P; streak=0; }
     }
   }
-  return {sh, streak};
+  return {sh:order[pos], streak, pos};
 }
+function orderedNames(){ const order=(S.order&&S.order.length===S.P)?S.order:S.players.map((_,i)=>i); return order.map(i=>S.players[i].name); }
 function currentShooter(){ return turnState().sh; }
 
 function renderShoot(){
   const A=app(); A.innerHTML="";
-  const {sh, streak}=turnState();
+  const {sh, streak, pos}=turnState();
 
   // turn display (random first, then pot=continue / miss=pass)
+  const nextName=S.players[S.order[(pos+1)%S.P]].name; // คนถัดไปตามลำดับที่สุ่มไว้
+  const lim=limitFor(sh);
   let streakLine;
   if(streak===0){
-    streakLine=`ถัดไปถ้าพลาด: ${esc(S.players[(sh+1)%S.P].name)}`;
-  } else if(S.contMode==="limited"){
-    const leftShots=S.contLimit-streak;
-    streakLine=`ยิงติดกันแล้ว ${streak} ลูก · ยิงต่อได้อีก ${leftShots} ลูก`;
+    streakLine=`ถัดไปถ้าพลาด: ${esc(nextName)}`;
+  } else if(lim){
+    streakLine=`ยิงติดกันแล้ว ${streak} ลูก · ยิงต่อได้อีก ${lim-streak} ลูก`;
   } else {
     streakLine=`ยิงติดกันแล้ว ${streak} ลูก · ยิงต่อได้เรื่อยๆ`;
   }
+  const orderStr=orderedNames().map((nm,k)=>k===pos?`<b style="color:var(--accent)">${esc(nm)}</b>`:esc(nm)).join(" → ");
   const turn=el(`<div class="card center">
-    <div class="muted">${S.actions.length===0?'🎲 สุ่มได้ให้เริ่มก่อน':(streak>0?'ยิงต่อ!':'ถึงตาของ')}</div>
+    <div class="muted">${S.actions.length===0?'🎲 สุ่มลำดับให้แล้ว':(streak>0?'ยิงต่อ!':'ถึงตาของ')}</div>
     <div style="font-size:26px;font-weight:800;color:var(--accent);margin:6px 0">${esc(S.players[sh].name)}</div>
     <div class="muted">${streakLine}</div>
+    <div class="muted" style="margin-top:6px;font-size:12px">ลำดับ: ${orderStr}</div>
   </div>`);
   A.appendChild(turn);
 
