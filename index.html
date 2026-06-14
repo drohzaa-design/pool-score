@@ -658,7 +658,7 @@ function renderPlayTab(A){
       <button data-m="limited">จำกัดจำนวนติดกัน</button>
     </div>
     <div id="limitBox" style="display:none">
-      <label>ยิงติดกันได้สูงสุดกี่ลูก (ครบแล้วเปลี่ยนคน)</label>
+      <label>ยิงติดกันได้สูงสุดกี่ครั้ง (ครบแล้วเปลี่ยนคน · ยิงครั้งเดียวลงหลายลูกนับเป็น 1 ครั้ง)</label>
       <input type="number" id="contLimit" min="1" max="13" value="${setupContLimit}">
     </div>
   </div>`);
@@ -717,7 +717,7 @@ function renderHandicaps(box){
         <label>ยิงลูกพิเศษ ⭐ (แต้ม/คน)</label><input type="number" class="hc-special" value="${hc.special}">
         <label>ยิงแย่งเลขคนอื่น (แต้ม)</label><input type="number" class="hc-steal" value="${hc.steal}">
         <label>ลูกขาวลง/ตกโต๊ะ เสีย (แต้ม/คน)</label><input type="number" class="hc-scratch" value="${hc.scratch}">
-        <label>จำกัดยิงติดกัน (ลูก · เว้นว่าง = ตามวง)</label><input type="number" class="hc-cont" min="1" value="${hc.contLimit||''}">
+        <label>จำกัดยิงติดกัน (ครั้ง · เว้นว่าง = ตามวง)</label><input type="number" class="hc-cont" min="1" value="${hc.contLimit||''}">
         <div class="spacer"></div>
         <button class="btn-ghost hc-reset" style="width:100%">↺ คืนค่าปกติ</button>
       </div>
@@ -897,7 +897,7 @@ function renderEntry(){
     buildOwners();
     S.order=shuffle(S.players.map((_,k)=>k)); // สับลำดับทั้งวง ไม่ใช่แค่คนเริ่ม
     S.firstShooter=S.order[0];                 // เผื่อโค้ดเก่าอ้างถึง
-    S.actions=[]; S._lastReveal="";
+    S.actions=[]; S._lastReveal=""; S._strokeOpen=false;
     S.phase="shoot"; renderShoot(); return;
   }
   const name=S.players[i].name;
@@ -1001,11 +1001,17 @@ function limitFor(i){
 function turnState(){
   const order=(S.order&&S.order.length===S.P)?S.order:S.players.map((_,i)=>i);
   const P=S.P;
-  let pos=0, streak=0; // เดินตามลำดับที่สุ่มไว้ (order) ไม่ใช่ลำดับที่นั่ง
-  for(const a of S.actions){
-    if(a.miss||a.scratch){ pos=(pos+1)%P; streak=0; }
-    else {
-      streak++;
+  const acts=S.actions;
+  let pos=0, streak=0; // streak = จำนวน "ครั้งที่ยิง" ติดกัน (1 ครั้งอาจลงหลายลูก) · เดินตามลำดับที่สุ่มไว้
+  for(let idx=0; idx<acts.length; idx++){
+    const a=acts[idx];
+    if(a.miss||a.scratch){ pos=(pos+1)%P; streak=0; continue; }
+    // ลูกที่ลงพร้อมครั้งก่อน (sameStroke) ไม่เพิ่มจำนวนครั้ง — นับรวมเป็นการยิงครั้งเดียว
+    if(!a.sameStroke) streak++;
+    const next=acts[idx+1];
+    // สตรีคยังเปิดอยู่ถ้าลูกถัดไปคือลูกที่ลงพร้อมกัน หรือ (ลูกสุดท้าย) กำลังรอผู้เล่นยืนยันว่าจบครั้งนี้
+    const stillOpen = next ? (!next.miss && !next.scratch && next.sameStroke) : !!S._strokeOpen;
+    if(!stillOpen){
       const lim=limitFor(order[pos]);
       if(lim && streak>=lim){ pos=(pos+1)%P; streak=0; }
     }
@@ -1026,9 +1032,9 @@ function renderShoot(){
   if(streak===0){
     streakLine=`ถัดไปถ้าพลาด: ${esc(nextName)}`;
   } else if(lim){
-    streakLine=`ยิงติดกันแล้ว ${streak} ลูก · ยิงต่อได้อีก ${lim-streak} ลูก`;
+    streakLine=`ยิงติดกันแล้ว ${streak} ครั้ง · ยิงต่อได้อีก ${lim-streak} ครั้ง`;
   } else {
-    streakLine=`ยิงติดกันแล้ว ${streak} ลูก · ยิงต่อได้เรื่อยๆ`;
+    streakLine=`ยิงติดกันแล้ว ${streak} ครั้ง · ยิงต่อได้เรื่อยๆ`;
   }
   const orderStr=orderedNames().map((nm,k)=>k===pos?`<b style="color:var(--accent)">${esc(nm)}</b>`:esc(nm)).join(" → ");
   const turn=el(`<div class="card center">
@@ -1088,6 +1094,7 @@ function renderShoot(){
   </div>`);
   A.appendChild(skip);
   skip.querySelector("#skip").addEventListener("click",()=>{
+    S._strokeOpen=false;
     S.actions.push({miss:true, by:sh});
     S.log.push(`[${S.players[sh].name}] ยิงพลาด`);
     S._lastReveal=`${S.players[sh].name} ยิงพลาด → เปลี่ยนคน`;
@@ -1096,6 +1103,7 @@ function renderShoot(){
   skip.querySelector("#scratch").addEventListener("click",()=>{
     const shooterName=S.players[sh].name;
     sfx("scratch");
+    S._strokeOpen=false;
     const msg=applyScratch(sh);
     S.actions.push({scratch:true, by:sh});
     S.log.push(`[${shooterName}] ${msg}`);
@@ -1116,7 +1124,7 @@ function renderShoot(){
       if(h.special!==UNIT) parts.push(`พิเศษ ${h.special}`);
       if(h.steal!==UNIT*2) parts.push(`แย่ง ${h.steal}`);
       if(h.scratch!==UNIT) parts.push(`ลูกขาว ${h.scratch}`);
-      if(h.contLimit) parts.push(`ยิงติดกัน ≤ ${h.contLimit}`);
+      if(h.contLimit) parts.push(`ยิงติดกัน ≤ ${h.contLimit} ครั้ง`);
       return `<div style="padding:6px 0;border-bottom:1px solid var(--line)"><b>${esc(p.name)}</b> <span class="muted">${parts.join(" · ")}</span></div>`;
     }).join("");
     A.appendChild(el(`<div class="card"><h2>🎯 ต่อให้รายคน</h2>${rows}</div>`));
@@ -1190,18 +1198,28 @@ function showShotPopup(d, after){
     ballHTML=`<div class="${ballCls}" style="${style}">${inner}</div>`;
   }
   const passHTML=d.passed?`<div class="shot-pass">ครบโควต้ายิงติดกัน → เปลี่ยนคนยิง</div>`:"";
+  const btnHTML=d.choices
+    ? `<button class="btn-primary" id="shotDone" style="width:100%">✓ จบการยิงครั้งนี้</button>
+       <div class="spacer"></div>
+       <button class="btn-ghost" id="shotMore" style="width:100%">➕ ยิงครั้งเดียวลงหลายลูก (เพิ่มอีกลูก)</button>`
+    : `<button class="btn-primary" id="shotBtn">ถัดไป</button>`;
   const ov=el(`<div class="overlay shot-ov ${K.cls}"><div class="overlay-box shot-box">
     ${ballHTML}
     <div class="shot-who">ผู้ยิง: <b>${esc(d.shooterName)}</b></div>
     <div class="shot-kind">${K.icon} ${K.label}</div>
     <div class="shot-pts">${K.pts}</div>
     ${passHTML}
-    <button class="btn-primary" id="shotBtn">ถัดไป</button>
+    ${btnHTML}
   </div></div>`);
   document.body.appendChild(ov);
-  const close=()=>{ if(!ov.parentNode) return; ov.remove(); after&&after(); };
-  ov.addEventListener("click",e=>{ if(e.target===ov) close(); });
-  ov.querySelector("#shotBtn").addEventListener("click",close);
+  const close=(cb)=>{ if(!ov.parentNode) return; ov.remove(); after&&after(); cb&&cb(); };
+  if(d.choices){
+    ov.querySelector("#shotDone").addEventListener("click",()=>close(d.choices.onDone));
+    ov.querySelector("#shotMore").addEventListener("click",()=>close(d.choices.onMore));
+  } else {
+    ov.addEventListener("click",e=>{ if(e.target===ov) close(); });
+    ov.querySelector("#shotBtn").addEventListener("click",()=>close());
+  }
 }
 
 function shootBall(n){
@@ -1215,15 +1233,44 @@ function shootBall(n){
   const ownerName = kind==="steal" ? S.players[b.owner].name : "";
   sfx(kind);
   const msg=applyPotScore(n, sh);
-  S.actions.push({n, by:sh});
-  S.log.push(`[${shooterName}] ${msg}`);
-  // if the limit just forced a turn change, note it
-  const passed = currentShooter()!==sh;
-  S._lastReveal = passed ? `${msg} — ครบโควต้ายิงติดกัน เปลี่ยนคน` : msg;
+  const cont = !!S._strokeOpen;            // ลูกนี้ลงพร้อมครั้งก่อน (ต่อจากลูกที่แล้วในการยิงครั้งเดียว)
+  S.actions.push({n, by:sh, sameStroke:cont});
+  S.log.push(`[${shooterName}] ${msg}${cont?" (ลงพร้อมครั้งก่อน)":""}`);
   const lo=applyLeftover();
   const ended=maybeAutoEnd();   // ตาจบเองอัตโนมัติเมื่อหมดโต๊ะ/เหลือแต่ลูกหลอก
-  if(!ended) renderShoot();
-  showShotPopup({n, kind, shooterName, ownerName, passed, hc:S.players[sh].hc}, ()=>{ if(lo) showLeftoverPopup(lo); });
+  const lim=limitFor(sh);
+  if(ended){
+    S._strokeOpen=false;
+    S._lastReveal=msg;
+    showShotPopup({n, kind, shooterName, ownerName, passed:false, hc:S.players[sh].hc}, ()=>{ if(lo) showLeftoverPopup(lo); });
+    return;
+  }
+  if(lim>0){
+    // จำกัดยิงติดกัน: ค้างตาผู้ยิงไว้ก่อน แล้วถามว่ายิงครั้งนี้ลงหลายลูกไหม
+    S._strokeOpen=true;
+    S._lastReveal=msg;
+    renderShoot();
+    showShotPopup({n, kind, shooterName, ownerName, passed:false, hc:S.players[sh].hc,
+      choices:{
+        onMore:()=>{
+          S._strokeOpen=true;   // แตะลูกถัดไป = ลงพร้อมกัน นับเป็นการยิงครั้งเดียว
+          S._lastReveal=`${shooterName} ยิงครั้งเดียวลงหลายลูก — แตะลูกถัดไปที่ลงพร้อมกัน`;
+          renderShoot();
+        },
+        onDone:()=>{
+          S._strokeOpen=false;  // จบครั้งนี้ -> คิดโควต้ายิงติดกัน
+          const passed = currentShooter()!==sh;
+          if(passed) S._lastReveal=`${msg} — ครบโควต้ายิงติดกัน เปลี่ยนคน`;
+          renderShoot();
+        }
+      }
+    }, ()=>{ if(lo) showLeftoverPopup(lo); });
+  } else {
+    S._strokeOpen=false;
+    S._lastReveal=msg;
+    renderShoot();
+    showShotPopup({n, kind, shooterName, ownerName, passed:false, hc:S.players[sh].hc}, ()=>{ if(lo) showLeftoverPopup(lo); });
+  }
 }
 
 /* แจกโบนัสลูกเหลือ: เมื่อลูกหลอกหมดโต๊ะแล้ว และลูกของผู้เล่นเหลือไม่เกินจำนวนไพ่
@@ -1299,6 +1346,7 @@ function maybeAutoEnd(){
 function undoLast(){
   if(!S.actions.length) return;
   sfx("undo");
+  S._strokeOpen=false;
   S.actions.pop();
   rebuildState();
 }
@@ -1310,6 +1358,8 @@ function rebuildState(){
   S.log=[]; S._lastReveal=""; S.leftoverDone=false;
   const acts=S.actions.slice(); S.actions=[];
   acts.forEach(a=>{
+    // ลูกที่ลงพร้อมครั้งก่อนต้องค้างตาผู้ยิงเดิมไว้ระหว่างเล่นซ้ำ
+    S._strokeOpen = !!a.sameStroke;
     const sh=currentShooter();
     if(a.miss){
       S.actions.push({miss:true, by:sh});
@@ -1319,12 +1369,14 @@ function rebuildState(){
       S.actions.push({scratch:true, by:sh});
       S.log.push(`[${S.players[sh].name}] ${msg}`);
     } else {
+      const cont=!!a.sameStroke;
       const msg=applyPotScore(a.n, sh);
-      S.actions.push({n:a.n, by:sh});
-      S.log.push(`[${S.players[sh].name}] ${msg}`);
+      S.actions.push({n:a.n, by:sh, sameStroke:cont});
+      S.log.push(`[${S.players[sh].name}] ${msg}${cont?" (ลงพร้อมครั้งก่อน)":""}`);
       applyLeftover();
     }
   });
+  S._strokeOpen=false;
   renderShoot();
 }
 
