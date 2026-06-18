@@ -144,6 +144,19 @@
     padding:26px 20px;text-align:center;max-width:420px;width:100%}
   .overlay-box h2{color:var(--danger);margin:6px 0 10px}
   .overlay-box p{color:var(--muted);font-size:15px;margin:0 0 18px}
+  /* ---- โหมดทีวี (จอใหญ่ อ่านไกล) ---- */
+  body.tv .wrap{max-width:1080px}
+  body.tv h1{font-size:30px}
+  body.tv #app .card h2{font-size:26px}
+  body.tv #app table{font-size:24px}
+  body.tv #app .card{padding:20px}
+  body.tv .pill{font-size:18px;padding:4px 12px}
+  body.tv .muted{font-size:18px}
+  body.tv .tv-name{font-size:52px;font-weight:800;color:var(--accent);margin:8px 0;line-height:1.1}
+  body.tv .tv-order{font-size:22px;margin-top:8px}
+  body.tv .grid{gap:12px}
+  body.tv .ball .num{font-size:30px}
+  body.tv #muteBtn{display:none}
 </style>
 </head>
 <body>
@@ -421,6 +434,139 @@ async function cloudBoot(){
   cloudListen();
 }
 
+/* ============================================================
+   TV / SPECTATOR MODE — ทีวีเป็นจอผู้ชม (อ่านอย่างเดียว)
+   - มือถือ (controller) ส่ง "ข้อมูลสาธารณะ" ของตาที่เล่นขึ้นคลาวด์ (field: live)
+   - ทีวีเปิด ?tv=1 → อ่านอย่างเดียว ไม่เขียนอะไรขึ้นคลาวด์
+   - เลขลับ (เจ้าของลูกที่ยังไม่ถูกยิง) ไม่ถูกส่งขึ้นคลาวด์เด็ดขาด
+============================================================ */
+const TV_MODE = /(?:^|[?&#])tv(?:=1)?(?:[&#]|$)/.test(location.search + location.hash);
+let _liveTimer=null;
+
+/* สร้าง snapshot สาธารณะจากเกมปัจจุบัน (ไม่มีเลขลับ) */
+function buildLiveSnapshot(){
+  if(typeof S==="undefined" || S===null) return { active:false, ts:Date.now() };
+  if(S.phase==="entry"){
+    return { active:true, phase:"entry", ts:Date.now(), players:S.players.map(p=>({name:p.name})) };
+  }
+  const t=turnState();
+  const balls={};
+  for(let n=1;n<=15;n++){
+    const b=S.balls[n];
+    if(b.shot){
+      balls[n]={shot:true, type:b.type,
+        by:(b.shotBy!=null && S.players[b.shotBy])?S.players[b.shotBy].name:null,
+        owner:(b.owner!=null && S.players[b.owner])?S.players[b.owner].name:null};
+    } else {
+      balls[n]={shot:false}; // ไม่บอกเจ้าของ = กันเลขลับ
+    }
+  }
+  return {
+    active:true, phase:S.phase, ts:Date.now(),
+    players:S.players.map((p,i)=>({name:p.name, net:netOf(i)})),
+    order:t.sh!=null ? (S.order&&S.order.length===S.P?S.order:S.players.map((_,i)=>i)).map(i=>S.players[i].name) : [],
+    shooter:(S.players[t.sh]?S.players[t.sh].name:null),
+    streak:t.streak,
+    balls, leftoverDone:!!S.leftoverDone,
+    remaining:Object.values(S.balls).filter(b=>!b.shot).length
+  };
+}
+
+/* ส่ง live ขึ้นคลาวด์ (เฉพาะ controller, debounce) — ไม่กระทบ names/session/hof
+   ข้ามถ้า snapshot เหมือนเดิม (กัน loop จาก cloudListen -> renderSetup -> syncLive) */
+let _lastLiveKey=null;
+function syncLive(){
+  if(TV_MODE || !_cloudOK) return;
+  const snap=buildLiveSnapshot();
+  const {ts, ...rest}=snap;
+  const key=JSON.stringify(rest);
+  if(key===_lastLiveKey) return;   // ไม่มีอะไรเปลี่ยน -> ไม่เขียนซ้ำ
+  _lastLiveKey=key;
+  clearTimeout(_liveTimer);
+  _liveTimer=setTimeout(async ()=>{
+    try{ await _cloudDoc.set({live:snap}, {merge:true}); }
+    catch(e){ console.warn("live push failed", e); }
+  }, 250);
+}
+
+/* ---- ฝั่งทีวี: เชื่อมคลาวด์แล้ว render ตาม snapshot ---- */
+function tvBoot(){
+  document.body.classList.add("tv");
+  if(!cloudInit()){ app().innerHTML='<div class="card center">เชื่อมต่อคลาวด์ไม่ได้</div>'; return; }
+  renderTV({});
+  _cloudDoc.onSnapshot(snap=>{ if(snap.exists) renderTV(snap.data()); },
+    err=>console.warn("tv listen err", err));
+}
+function tvBall(n, b){
+  b=b||{}; const def=BALL[n];
+  let cls="ball"+(def.t==="st"?" stripe":"");
+  if(b.shot){ cls+=" shot"; if(b.type==="owned") cls+=" owned-rev"; else if(b.type==="decoy") cls+=" decoy-rev"; if(b.type==="special") cls+=" special"; }
+  const style=def.t==="st"?"":`background:${def.c}`;
+  const inner=(def.t==="st"?`<div class="band" style="background:${def.c}"></div>`:"")+`<div class="shine"></div><div class="num">${n}</div>`;
+  return `<div class="${cls}" style="${style}">${inner}</div>`;
+}
+function tvScoreCard(players, win){
+  const rows=(players||[]).slice().sort((a,b)=>(b.net||0)-(a.net||0));
+  let html=`<table><tr><th>ผู้เล่น</th><th>สุทธิ</th></tr>`;
+  rows.forEach((r,i)=>{ const n=r.net||0;
+    html+=`<tr${win&&i===0?' style="font-weight:800"':''}><td>${win&&i===0?'🏆 ':''}${esc(r.name)}</td>
+      <td class="${n>0?'pos':n<0?'neg':''}">${n>0?'+':''}${n}</td></tr>`; });
+  html+=`</table>`;
+  return el(`<div class="card"><h2>แต้มสะสม (สุทธิ)</h2>${html}</div>`);
+}
+function tvSessionCard(ses){
+  ses=ses||{}; const sp=ses.players||{};
+  const names=Object.keys(sp);
+  if(!names.length) return el(`<div class="card"><h2>📅 รอบนี้</h2><div class="muted">ยังไม่มีผลในรอบนี้</div></div>`);
+  const rows=names.map(n=>({n, net:sp[n].net||0, played:sp[n].played||0})).sort((a,b)=>b.net-a.net);
+  let html=`<table><tr><th>#</th><th>ผู้เล่น</th><th>ตา</th><th>สุทธิ</th></tr>`;
+  rows.forEach((r,i)=>{ html+=`<tr><td>${i+1}</td><td>${esc(r.n)}</td><td>${r.played}</td>
+    <td class="${r.net>0?'pos':r.net<0?'neg':''}">${r.net>0?'+':''}${r.net}</td></tr>`; });
+  html+=`</table>`;
+  return el(`<div class="card"><h2>📅 รอบนี้</h2>${html}</div>`);
+}
+function tvHofCard(hof){
+  const players=(hof&&hof.players)||{};
+  const entries=Object.entries(players);
+  if(!entries.length) return el(`<div class="card"><h2>🏆 Hall of Fame</h2><div class="muted">—</div></div>`);
+  const ranked=entries.map(([n,h])=>({n, net:h.totalNet||0, wins:h.wins||0, played:h.played||0})).sort((a,b)=>b.net-a.net);
+  const medals=["🥇","🥈","🥉"];
+  let html=`<table><tr><th>#</th><th>ผู้เล่น</th><th>ตา</th><th>ชนะ</th><th>สุทธิ</th></tr>`;
+  ranked.forEach((r,i)=>{ html+=`<tr><td>${medals[i]||(i+1)}</td><td>${esc(r.n)}</td><td>${r.played}</td><td>${r.wins}</td>
+    <td class="${r.net>0?'pos':r.net<0?'neg':''}">${r.net>0?'+':''}${r.net}</td></tr>`; });
+  html+=`</table>`;
+  return el(`<div class="card"><h2>🏆 Hall of Fame</h2>${html}</div>`);
+}
+function renderTV(data){
+  const A=app(); A.innerHTML="";
+  const live=(data&&data.live)||{active:false};
+  if(live.active && (live.phase==="shoot"||live.phase==="review")){
+    const order=(live.order||[]).map(nm=>nm===live.shooter?`<b style="color:var(--accent)">${esc(nm)}</b>`:esc(nm)).join(" → ");
+    A.appendChild(el(`<div class="card center">
+      <div class="muted">${live.streak>0?'🔥 ยิงต่อ!':'ถึงตาของ'}</div>
+      <div class="tv-name">${esc(live.shooter||'-')}</div>
+      <div class="muted tv-order">ลำดับ: ${order}</div></div>`));
+    const bc=el(`<div class="card"><h2>ลูกบนโต๊ะ <span class="pill">เหลือ ${live.remaining||0} ลูก</span></h2></div>`);
+    let bh=`<div class="grid">`;
+    for(let n=1;n<=15;n++) bh+=tvBall(n,(live.balls||{})[n]);
+    bh+=`</div>`;
+    bc.appendChild(el(bh));
+    A.appendChild(bc);
+    A.appendChild(tvScoreCard(live.players));
+  } else if(live.active && live.phase==="result"){
+    A.appendChild(el(`<div class="card center"><div class="tv-name">🏁 จบตา!</div></div>`));
+    A.appendChild(tvScoreCard(live.players, true));
+  } else if(live.active && live.phase==="entry"){
+    A.appendChild(el(`<div class="card center"><div class="tv-name">🤫 กำลังแจกไพ่ลับ...</div>
+      <div class="muted">รอผู้เล่นดูเลขของตัวเองให้ครบก่อนเริ่มยิง</div></div>`));
+  } else {
+    A.appendChild(el(`<div class="card center"><div class="tv-name">🎱 พร้อมเล่น</div>
+      <div class="muted">รอเริ่มตาใหม่จากมือถือ</div></div>`));
+  }
+  A.appendChild(tvSessionCard(data&&data.session));
+  A.appendChild(tvHofCard(data&&data.hof));
+}
+
 /* ---------------- game state ---------------- */
 let S = null;
 function newGameState(players, cardsPer, contMode, contLimit, dealMode){
@@ -608,6 +754,7 @@ let hofSort="net", hofOpen=null, leaderOpen=null;
 
 function renderSetup(){
   const A=app(); A.innerHTML="";
+  syncLive();  // หน้าโฮม = ไม่มีตาเล่นอยู่ -> แจ้งทีวีเข้าโหมดสแตนด์บาย
   const tabs=el(`<div class="seg" style="margin-bottom:14px">
     <button data-t="play">⚙️ ตั้งวง</button>
     <button data-t="session">📅 รอบนี้</button>
@@ -627,6 +774,24 @@ function renderSetup(){
 function renderPlayTab(A){
   let hcBox=null; // กล่องตั้งค่า "ต่อให้รายคน" (อัปเดตเมื่อเลือก/เพิ่มคน)
   const refreshHC=()=>{ if(hcBox) renderHandicaps(hcBox); };
+
+  // ปุ่มเปิดโหมดทีวี (เอาขึ้นจอใหญ่เป็นผู้ชม)
+  const tvUrl=location.origin+location.pathname+"?tv=1";
+  const tvCard=el(`<div class="card"><h2>📺 โหมดทีวี</h2>
+    <div class="hint">เปิดลิงก์นี้บนเบราว์เซอร์ของทีวี แล้วเล่น/อัพสกอร์จากมือถือ — ทีวีจะโชว์กระดานสดและอันดับ (เลขลับของแต่ละคนไม่แสดง)</div>
+    <div class="spacer"></div>
+    <div class="row" style="gap:8px;align-items:center">
+      <input type="text" id="tvUrl" readonly value="${esc(tvUrl)}" style="flex:1">
+      <button class="btn-blue" id="tvCopy">คัดลอก</button>
+      <button class="btn-ghost" id="tvOpen" style="width:auto;padding:8px 14px">เปิด</button>
+    </div></div>`);
+  A.appendChild(tvCard);
+  tvCard.querySelector("#tvOpen").addEventListener("click",()=>window.open(tvUrl,"_blank"));
+  tvCard.querySelector("#tvCopy").addEventListener("click",()=>{
+    const inp=tvCard.querySelector("#tvUrl"); inp.select();
+    try{ navigator.clipboard.writeText(tvUrl); }catch(e){ try{document.execCommand("copy");}catch(_){} }
+    const b=tvCard.querySelector("#tvCopy"); const o=b.textContent; b.textContent="คัดลอกแล้ว ✓"; setTimeout(()=>b.textContent=o,1500);
+  });
   const c1=el(`<div class="card"></div>`);
   c1.innerHTML=`<h2>1. ผู้เล่น <span class="pill" id="cnt"></span></h2>
     <div class="hint">แตะเพื่อเลือกเข้าตานี้ (ลำดับการเลือก = ลำดับการกรอกไพ่)</div>
@@ -999,6 +1164,7 @@ function renderHOFTab(A){
 let entryGateOpen=false;
 function renderEntry(){
   const A=app(); A.innerHTML="";
+  syncLive();
   const i=S.entryIndex;
   if(i>=S.P){ // done -> build owners, สุ่มลำดับการเล่นทั้งหมด, then shoot
     buildOwners();
@@ -1167,6 +1333,7 @@ function revealMyNumbers(sh){
 
 function renderShoot(){
   const A=app(); A.innerHTML="";
+  syncLive();
   const {sh, streak, pos}=turnState();
 
   // turn display (random first, then pot=continue / miss=pass)
@@ -1566,6 +1733,7 @@ function rebuildState(){
 function renderEndReview(){
   const A=app(); A.innerHTML="";
   S.phase="review"; S.finished=true;
+  syncLive();
   A.appendChild(el(`<div class="card center"><h2>🏁 ตากำลังจะจบ</h2>
     <div class="muted">ตรวจ/แก้ให้เรียบร้อยก่อนกดบันทึกผล</div></div>`));
 
@@ -1768,6 +1936,7 @@ function renderSessionSummary(box){
 }
 function renderResult(){
   const A=app(); A.innerHTML="";
+  syncLive();
   A.appendChild(el(`<div class="card center"><h2>🏁 จบตาแล้ว</h2>
     <div class="muted">หยิบคนละ ${S.cardsPer} ใบ · ${S.P} คน</div></div>`));
 
@@ -1816,8 +1985,12 @@ function renderResult(){
   sync();
   btn.addEventListener("click",()=>{ setMuted(!_muted); sync(); if(_muted){ try{speechSynthesis.cancel();}catch(e){} } else { sfx("own"); } });
 })();
-renderSetup();   // แสดงข้อมูลในเครื่องทันที
-cloudBoot();     // แล้วค่อย sync กับคลาวด์ (ดึงข้อมูลล่าสุด/กันข้อมูลหาย)
+if(TV_MODE){
+  tvBoot();        // โหมดทีวี: อ่านอย่างเดียว แสดงกระดานสด + อันดับ
+} else {
+  renderSetup();   // แสดงข้อมูลในเครื่องทันที
+  cloudBoot();     // แล้วค่อย sync กับคลาวด์ (ดึงข้อมูลล่าสุด/กันข้อมูลหาย)
+}
 </script>
 </body>
 </html>
