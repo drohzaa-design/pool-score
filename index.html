@@ -426,6 +426,7 @@ function newGameState(players, cardsPer, contMode, contLimit, dealMode){
   return {
     players, cardsPer, P, ledger, balls,
     hands:players.map(()=>[]),  // numbers per player
+    pins:players.map(()=>null), // รหัสส่วนตัวต่อคน (ดูเลขตัวเองตอนยิง) — ไม่บันทึกลงเครื่อง/คลาวด์
     phase:"entry", entryIndex:0,
     firstShooter:0, order:Array.from({length:P},(_,i)=>i), actions:[],
     contMode:contMode||"unlimited", contLimit:contLimit||1,
@@ -990,10 +991,15 @@ function renderEntry(){
       <div class="spacer"></div>
       <div class="reveal-balls">${balls}</div>
       <div class="spacer"></div>
+      <div class="hint">🔒 ตั้งรหัสส่วนตัว (ถ้าอยากเปิดดูเลขตัวเองตอนยิง) — เว้นว่างไว้ก็ได้</div>
+      <input type="number" id="pin" inputmode="numeric" placeholder="รหัส (ตัวเลข) ไม่ใส่ก็ได้" style="text-align:center;margin-top:6px">
+      <div class="spacer"></div>
       <button class="btn-primary" id="confirm">จำได้แล้ว ซ่อน 🔒</button>
     </div>`);
     A.appendChild(r);
     r.querySelector("#confirm").addEventListener("click",()=>{
+      const pv=(r.querySelector("#pin").value||"").trim();
+      S.pins[i]=pv?pv:null;
       S.entryIndex++; entryGateOpen=false;
       renderEntry();
     });
@@ -1006,6 +1012,9 @@ function renderEntry(){
     <div class="spacer"></div>
     <div class="grid" id="inputs"></div>
     <div class="err" id="e"></div>
+    <div class="spacer"></div>
+    <div class="hint">🔒 ตั้งรหัสส่วนตัว (ถ้าอยากเปิดดูเลขตัวเองตอนยิง) — เว้นว่างไว้ก็ได้</div>
+    <input type="number" id="pin" inputmode="numeric" placeholder="รหัส (ตัวเลข) ไม่ใส่ก็ได้" style="text-align:center;margin-top:6px">
     <div class="spacer"></div>
     <button class="btn-primary" id="confirm">ยืนยันและซ่อน 🔒</button>
   </div>`);
@@ -1027,6 +1036,8 @@ function renderEntry(){
     S.hands.forEach((h,idx)=>{ if(idx!==i) h.forEach(v=>taken.add(v)); });
     if(vals.some(v=>taken.has(v))){ triggerRedraw(); return; }
     S.hands[i]=vals;
+    const pv=(c.querySelector("#pin").value||"").trim();
+    S.pins[i]=pv?pv:null;
     S.entryIndex++; entryGateOpen=false;
     renderEntry();
   });
@@ -1085,6 +1096,33 @@ function turnState(){
 function orderedNames(){ const order=(S.order&&S.order.length===S.P)?S.order:S.players.map((_,i)=>i); return order.map(i=>S.players[i].name); }
 function currentShooter(){ return turnState().sh; }
 
+/* เปิดดูเลขของตัวเอง (เฉพาะคนที่ถึงตายิง) — ใส่รหัสส่วนตัวถ้าตั้งไว้ */
+function revealMyNumbers(sh){
+  const pin=S.pins ? S.pins[sh] : null;
+  if(pin){
+    const tryPin=prompt(`ใส่รหัสส่วนตัวของ ${S.players[sh].name} เพื่อดูเลข`);
+    if(tryPin==null) return;              // กดยกเลิก
+    if(tryPin.trim()!==pin){ alert("รหัสไม่ถูกต้อง 🔒"); return; }
+  }
+  const hand=S.hands[sh].slice().sort((a,b)=>a-b);
+  const balls=hand.map(n=>{
+    const shotCls=S.balls[n].shot?" shot":"";
+    return ballHTML(n, shotCls);
+  }).join("");
+  const note=pin?"":"⚠️ คนนี้ไม่ได้ตั้งรหัสส่วนตัวไว้";
+  const ov=el(`<div class="overlay" style="animation:none;background:rgba(0,0,0,.88)">
+    <div class="overlay-box" style="border-color:var(--accent)">
+      <div style="font-size:44px">🔢</div>
+      <h2 style="color:var(--accent)">เลขของ ${esc(S.players[sh].name)}</h2>
+      <p>ลูกที่จางคือลูกที่ยิงลงไปแล้ว ${note?('<br>'+note):''}</p>
+      <div class="reveal-balls" style="justify-content:center">${balls}</div>
+      <div class="spacer"></div>
+      <button class="btn-primary" id="hideRev" style="width:100%">ซ่อน 🔒</button>
+    </div></div>`);
+  document.body.appendChild(ov);
+  ov.querySelector("#hideRev").addEventListener("click",()=>ov.remove());
+}
+
 function renderShoot(){
   const A=app(); A.innerHTML="";
   const {sh, streak, pos}=turnState();
@@ -1108,6 +1146,13 @@ function renderShoot(){
     <div class="muted" style="margin-top:6px;font-size:12px">ลำดับ: ${orderStr}</div>
   </div>`);
   A.appendChild(turn);
+
+  // ปุ่มดูเลขของตัวเอง — เฉพาะคนที่ถึงตายิงเท่านั้น (คนอื่นดูไม่ได้)
+  {
+    const revBtn=el(`<button class="btn-ghost" id="myNums" style="width:100%;margin-bottom:12px">🔒 ดูเลขของฉัน (${esc(S.players[sh].name)})</button>`);
+    revBtn.addEventListener("click",()=>revealMyNumbers(sh));
+    A.appendChild(revBtn);
+  }
 
   // โบนัสลูกเหลือ: แบนเนอร์ค้างไว้ให้เห็นชัดจนจบตา
   if(S.leftoverDone){
