@@ -144,19 +144,37 @@
     padding:26px 20px;text-align:center;max-width:420px;width:100%}
   .overlay-box h2{color:var(--danger);margin:6px 0 10px}
   .overlay-box p{color:var(--muted);font-size:15px;margin:0 0 18px}
-  /* ---- โหมดทีวี (จอใหญ่ อ่านไกล) ---- */
-  body.tv .wrap{max-width:1080px}
-  body.tv h1{font-size:30px}
-  body.tv #app .card h2{font-size:26px}
-  body.tv #app table{font-size:24px}
-  body.tv #app .card{padding:20px}
-  body.tv .pill{font-size:18px;padding:4px 12px}
-  body.tv .muted{font-size:18px}
-  body.tv .tv-name{font-size:52px;font-weight:800;color:var(--accent);margin:8px 0;line-height:1.1}
-  body.tv .tv-order{font-size:22px;margin-top:8px}
-  body.tv .grid{gap:12px}
-  body.tv .ball .num{font-size:30px}
+  /* ---- โหมดทีวี (จอใหญ่ แนวกว้าง ไม่ต้องเลื่อนจอ) ---- */
+  body.tv{overflow:hidden;height:100vh}
+  body.tv .wrap{max-width:none;width:100vw;height:100vh;box-sizing:border-box;padding:18px 22px;
+    display:flex;flex-direction:column;margin:0}
+  body.tv h1{font-size:26px;margin:0}
+  body.tv .sub{font-size:15px;margin:2px 0 10px}
+  body.tv #app{flex:1 1 auto;min-height:0;display:flex}
   body.tv #muteBtn{display:none}
+
+  body.tv .tv-stage{display:grid;gap:16px;width:100%;height:100%;min-height:0}
+  body.tv .tv-stage.live{grid-template-columns:1.3fr 1fr}
+  body.tv .tv-stage.full{grid-template-columns:1fr 1fr;place-content:stretch}
+  body.tv .tv-col{display:flex;flex-direction:column;gap:14px;min-height:0;overflow:hidden}
+  body.tv .tv-col .card{margin:0}
+  body.tv .tv-col.fit .card{flex:1 1 0;min-height:0;overflow:hidden;display:flex;flex-direction:column}
+  body.tv .tv-col.fit .card table{flex:1 1 auto}
+
+  body.tv .card{padding:16px}
+  body.tv #app .card h2{font-size:22px;margin:0 0 8px}
+  body.tv #app table{font-size:20px;width:100%}
+  body.tv #app table th,body.tv #app table td{padding:5px 10px}
+  body.tv .pill{font-size:16px;padding:3px 12px}
+  body.tv .muted{font-size:16px}
+  body.tv .tv-name{font-size:48px;font-weight:800;color:var(--accent);margin:4px 0;line-height:1.05}
+  body.tv .tv-order{font-size:20px;margin-top:6px}
+
+  body.tv .tv-board{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
+  body.tv .tv-board .grid{flex:1 1 auto;align-content:center;gap:12px;
+    grid-template-columns:repeat(5,minmax(0,1fr));max-width:680px;margin:0 auto;width:100%}
+  body.tv .tv-board .ball .num{font-size:28px}
+  body.tv .tv-banner{flex:0 0 auto}
 </style>
 </head>
 <body>
@@ -512,7 +530,7 @@ function tvScoreCard(players, win){
     html+=`<tr${win&&i===0?' style="font-weight:800"':''}><td>${win&&i===0?'🏆 ':''}${esc(r.name)}</td>
       <td class="${n>0?'pos':n<0?'neg':''}">${n>0?'+':''}${n}</td></tr>`; });
   html+=`</table>`;
-  return el(`<div class="card"><h2>แต้มสะสม (สุทธิ)</h2>${html}</div>`);
+  return el(`<div class="card"><h2>🎯 แต้มตานี้ (สุทธิ)</h2>${html}</div>`);
 }
 function tvSessionCard(ses){
   ses=ses||{}; const sp=ses.players||{};
@@ -540,31 +558,42 @@ function tvHofCard(hof){
 function renderTV(data){
   const A=app(); A.innerHTML="";
   const live=(data&&data.live)||{active:false};
-  if(live.active && (live.phase==="shoot"||live.phase==="review")){
+  const isLive = live.active && (live.phase==="shoot"||live.phase==="review");
+  const stage=el(`<div class="tv-stage ${isLive?'live':'full'}"></div>`);
+  const left=el(`<div class="tv-col"></div>`);
+  const right=el(`<div class="tv-col fit"></div>`);
+
+  if(isLive){
     const order=(live.order||[]).map(nm=>nm===live.shooter?`<b style="color:var(--accent)">${esc(nm)}</b>`:esc(nm)).join(" → ");
-    A.appendChild(el(`<div class="card center">
+    left.appendChild(el(`<div class="card center tv-banner">
       <div class="muted">${live.streak>0?'🔥 ยิงต่อ!':'ถึงตาของ'}</div>
       <div class="tv-name">${esc(live.shooter||'-')}</div>
       <div class="muted tv-order">ลำดับ: ${order}</div></div>`));
-    const bc=el(`<div class="card"><h2>ลูกบนโต๊ะ <span class="pill">เหลือ ${live.remaining||0} ลูก</span></h2></div>`);
+    const bc=el(`<div class="card tv-board"><h2>ลูกบนโต๊ะ <span class="pill">เหลือ ${live.remaining||0} ลูก</span></h2></div>`);
     let bh=`<div class="grid">`;
     for(let n=1;n<=15;n++) bh+=tvBall(n,(live.balls||{})[n]);
     bh+=`</div>`;
     bc.appendChild(el(bh));
-    A.appendChild(bc);
-    A.appendChild(tvScoreCard(live.players));
+    left.appendChild(bc);
+    right.appendChild(tvScoreCard(live.players));
+    right.appendChild(tvSessionCard(data&&data.session));
   } else if(live.active && live.phase==="result"){
-    A.appendChild(el(`<div class="card center"><div class="tv-name">🏁 จบตา!</div></div>`));
-    A.appendChild(tvScoreCard(live.players, true));
+    left.appendChild(el(`<div class="card center tv-banner" style="flex:1;display:flex;flex-direction:column;justify-content:center"><div class="tv-name">🏁 จบตา!</div></div>`));
+    right.appendChild(tvScoreCard(live.players, true));
+    right.appendChild(tvSessionCard(data&&data.session));
   } else if(live.active && live.phase==="entry"){
-    A.appendChild(el(`<div class="card center"><div class="tv-name">🤫 กำลังแจกไพ่ลับ...</div>
+    left.appendChild(el(`<div class="card center tv-banner" style="flex:1;display:flex;flex-direction:column;justify-content:center"><div class="tv-name">🤫 กำลังแจกไพ่ลับ...</div>
       <div class="muted">รอผู้เล่นดูเลขของตัวเองให้ครบก่อนเริ่มยิง</div></div>`));
+    right.appendChild(tvSessionCard(data&&data.session));
   } else {
-    A.appendChild(el(`<div class="card center"><div class="tv-name">🎱 พร้อมเล่น</div>
+    left.appendChild(el(`<div class="card center tv-banner" style="flex:1;display:flex;flex-direction:column;justify-content:center"><div class="tv-name">🎱 พร้อมเล่น</div>
       <div class="muted">รอเริ่มตาใหม่จากมือถือ</div></div>`));
+    right.appendChild(tvSessionCard(data&&data.session));
   }
-  A.appendChild(tvSessionCard(data&&data.session));
-  A.appendChild(tvHofCard(data&&data.hof));
+
+  stage.appendChild(left);
+  stage.appendChild(right);
+  A.appendChild(stage);
 }
 
 /* ---------------- game state ---------------- */
