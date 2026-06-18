@@ -228,7 +228,8 @@ function resetSession(){ lsSet(K_SES, blankSession()); cloudPush(); }
 /* Hall of Fame (lifetime) */
 function blankHOF(){ return {players:{}, since:new Date().toISOString()}; }
 function blankPlayerHOF(){ return {played:0,wins:0,totalNet:0,bestRound:null,worstRound:null,
-  curStreak:0,bestStreak:0,ownPots:0,stealPots:0,specialPots:0,decoyPots:0,leftoverWins:0,lastPlayed:null}; }
+  curStreak:0,bestStreak:0,ownPots:0,stealPots:0,specialPots:0,decoyPots:0,leftoverWins:0,lastPlayed:null,
+  scratches:0,misses:0,bestCombo:0,stolenFrom:0,closes:0,curLoseStreak:0,worstLoseStreak:0}; }
 function loadHOF(){ return lsGet(K_HOF, blankHOF()); }
 function saveHOF(h){ lsSet(K_HOF, h); cloudPush(); }
 function resetHOF(){ lsSet(K_HOF, blankHOF()); cloudOverwrite(); }
@@ -267,6 +268,14 @@ function recordRoundResult(results, pairDelta){
     h.bestStreak= Math.max(h.bestStreak, h.curStreak);
     h.ownPots+=r.own; h.stealPots+=r.steal; h.specialPots+=r.special;
     h.decoyPots+=r.decoy; h.leftoverWins+=r.leftover;
+    // สถิติลูกเล่น (guard ||0 กันข้อมูลเก่าที่ยังไม่มีฟิลด์)
+    h.scratches=(h.scratches||0)+(r.scratches||0);
+    h.misses=(h.misses||0)+(r.misses||0);
+    h.bestCombo=Math.max(h.bestCombo||0, r.bestCombo||0);
+    h.stolenFrom=(h.stolenFrom||0)+(r.victim||0);
+    h.closes=(h.closes||0)+(r.closes||0);
+    if((r.net||0)<0){ h.curLoseStreak=(h.curLoseStreak||0)+1; } else { h.curLoseStreak=0; }
+    h.worstLoseStreak=Math.max(h.worstLoseStreak||0, h.curLoseStreak||0);
     h.lastPlayed=new Date().toISOString();
   });
   Object.keys(pairDelta).forEach(a=>{
@@ -838,20 +847,33 @@ function hofDetail(h){
     ตาดีสุด: <b class="pos">+${h.bestRound??0}</b> · ตาแย่สุด: <b class="neg">${h.worstRound??0}</b><br>
     🔥 ชนะติดกันสูงสุด: <b>${h.bestStreak}</b> (ปัจจุบัน ${h.curStreak})<br>
     🎯 ยิงเลขตัวเอง: <b>${h.ownPots}</b> · 🥷 แย่งคนอื่น: <b>${h.stealPots}</b><br>
-    ⭐ แต้มพิเศษ: <b>${h.specialPots}</b> · 🫥 ลูกหลอก: <b>${h.decoyPots}</b> · 🪙 ลูกเหลือ: <b>${h.leftoverWins}</b>
+    ⭐ แต้มพิเศษ: <b>${h.specialPots}</b> · 🫥 ลูกหลอก: <b>${h.decoyPots}</b> · 🪙 ลูกเหลือ: <b>${h.leftoverWins}</b><br>
+    🎬 นักปิดเกม: <b>${h.closes||0}</b> · 💥 คอมโบสูงสุด: <b>${h.bestCombo||0}</b> ลูก<br>
+    🤡 ฟาวล์: <b>${h.scratches||0}</b> · 😅 พลาด: <b>${h.misses||0}</b> · 😭 โดนแย่ง: <b>${h.stolenFrom||0}</b><br>
+    🥶 แพ้ติดกันสูงสุด: <b>${h.worstLoseStreak||0}</b> (ตอนนี้ ${h.curLoseStreak||0})
   </div>`;
 }
 function renderLeaders(entries){
   function top(fn){ let best=null; entries.forEach(([n,h])=>{ const v=fn(h); if(v>0 && (!best||v>best.v)) best={n,v}; }); return best; }
+  function bot(fn){ let worst=null; entries.forEach(([n,h])=>{ const v=fn(h); if(v<0 && (!worst||v<worst.v)) worst={n,v}; }); return worst; }
   const cats=[
     {icon:"👑",label:"ราชาแห่งวง (สุทธิสูงสุด)",fn:h=>h.totalNet},
     {icon:"🏅",label:"ชนะมากสุด",fn:h=>h.wins},
     {icon:"🎯",label:"มือแม่น (ยิงเลขตัวเอง)",fn:h=>h.ownPots},
     {icon:"🥷",label:"จอมแย่ง (ยิงโดนคนอื่น)",fn:h=>h.stealPots},
     {icon:"🔥",label:"ชนะติดกันสูงสุด",fn:h=>h.bestStreak},
+    {icon:"🎬",label:"นักปิดเกม (ยิงลูกจบ)",fn:h=>h.closes||0},
+    {icon:"💥",label:"ยิงรัว (คอมโบสูงสุด)",fn:h=>h.bestCombo||0},
+    {icon:"😭",label:"น้ำตาตกใน (โดนแย่งบ่อย)",fn:h=>h.stolenFrom||0},
+    {icon:"🤡",label:"จอมฟาวล์ (ลูกขาว/ตกโต๊ะ)",fn:h=>h.scratches||0},
+    {icon:"😅",label:"มือสั่น (ยิงพลาด)",fn:h=>h.misses||0},
+    {icon:"🥶",label:"ดวงซวย (แพ้ติดกัน)",fn:h=>h.worstLoseStreak||0},
   ];
   let html="";
   cats.forEach(c=>{ const t=top(c.fn); if(t) html+=`<div style="padding:7px 0;border-bottom:1px solid var(--line)">${c.icon} <b>${c.label}:</b> ${esc(t.n)} <span class="pill">${t.v}</span></div>`; });
+  // 💸 เจ้าบุญทุ่ม (ATM): เสียสุทธิรวมมากสุด (totalNet ติดลบมากสุด)
+  const atm=bot(h=>h.totalNet);
+  if(atm) html+=`<div style="padding:7px 0;border-bottom:1px solid var(--line)">💸 <b>เจ้าบุญทุ่ม (ATM):</b> ${esc(atm.n)} <span class="pill">${atm.v}</span></div>`;
   return el(`<div class="card"><h2>⭐ สถิติเด่น</h2>${html||'<div class="muted">—</div>'}</div>`);
 }
 function appendHOFReset(A){
@@ -1595,11 +1617,31 @@ function endRound(){
     else if(b.type==="decoy") tally[by].decoy++;
     else if(b.type==="owned"){ if(b.owner===by) tally[by].own++; else tally[by].steal++; }
   });
+  // สถิติลูกเล่นต่อตา: ฟาวล์/พลาด/คอมโบ/โดนแย่ง/นักปิดเกม
+  const scr=S.players.map(()=>0), mis=S.players.map(()=>0),
+        combo=S.players.map(()=>0), victim=S.players.map(()=>0);
+  let runSize=0, runBy=null;
+  S.actions.forEach(a=>{
+    if(a.scratch){ if(a.by!=null) scr[a.by]++; runSize=0; runBy=null; return; }
+    if(a.miss){ if(a.by!=null) mis[a.by]++; runSize=0; runBy=null; return; }
+    // ยิงลง: ลูกที่ลงพร้อมครั้งก่อน (sameStroke) นับต่อเป็นคอมโบเดียวกัน
+    if(a.sameStroke && runBy===a.by){ runSize++; } else { runSize=1; runBy=a.by; }
+    if(a.by!=null && runSize>combo[a.by]) combo[a.by]=runSize;
+  });
+  // นักปิดเกม: คนยิงลูกจริงลูกสุดท้าย (ข้ามฟาวล์/พลาดที่ต่อท้าย)
+  let closer=null;
+  for(let i=S.actions.length-1;i>=0;i--){ const a=S.actions[i]; if(!a.scratch && !a.miss){ closer=a.by; break; } }
+  // น้ำตาตกใน: ลูกตัวเองโดนคนอื่นยิง
+  Object.values(S.balls).forEach(b=>{
+    if(b.shot && b.type==="owned" && b.owner!=null && b.shotBy!=null && b.shotBy!==b.owner) victim[b.owner]++;
+  });
+
   const nets=S.players.map((p,i)=>netOf(i));
   const maxNet=Math.max(...nets);
   const allTied=nets.every(n=>n===maxNet);
   const results=S.players.map((p,i)=>({
-    name:p.name, net:nets[i], win:!allTied && nets[i]===maxNet, ...tally[i]
+    name:p.name, net:nets[i], win:!allTied && nets[i]===maxNet, ...tally[i],
+    scratches:scr[i], misses:mis[i], bestCombo:combo[i], victim:victim[i], closes:(closer===i?1:0)
   }));
   // session pairwise delta (by name)
   const pairDelta={};
