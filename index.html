@@ -1320,6 +1320,7 @@ function shootBall(n){
   if(ended){
     S._strokeOpen=false;
     S._lastReveal=msg;
+    renderEndReview();   // หน้าตรวจก่อนบันทึก (ยังไม่ commit) — ใส่ลูกขาว/ย้อนได้
     showShotPopup({n, kind, shooterName, ownerName, passed:false, hc:S.players[sh].hc}, ()=>{ if(lo) showLeftoverPopup(lo); });
     return;
   }
@@ -1416,14 +1417,18 @@ function showLeftoverPopup(info){
 }
 
 /* ตรวจจุดจบของตาอัตโนมัติหลังยิงแต่ละลูก */
-function maybeAutoEnd(){
+/* โต๊ะจบหรือยัง: หมดโต๊ะ หรือเหลือแต่ลูกหลอก (ไม่มีใครอยากยิง) */
+function isTableFinished(){
   const rem=Object.values(S.balls).filter(b=>!b.shot);
-  if(rem.length===0){ endRound(); return true; }
+  if(rem.length===0) return true;
   const remOwned=rem.filter(b=>b.type==="owned").length;
   const remDecoy=rem.filter(b=>b.type==="decoy").length;
   const remSpecial=rem.filter(b=>b.type==="special").length;
-  // เหลือแต่ลูกหลอก (ไม่มีใครอยากยิง) -> จบ ไม่มีแต้ม
-  if(remOwned===0 && remSpecial===0 && remDecoy>0){ endRound(); return true; }
+  return (remOwned===0 && remSpecial===0 && remDecoy>0);
+}
+/* ตรวจจบโต๊ะ — แค่ตั้งธง ยังไม่ commit (ไปหน้าตรวจก่อนบันทึกแทน) */
+function maybeAutoEnd(){
+  if(isTableFinished()){ S.finished=true; return true; }
   return false;
 }
 
@@ -1433,6 +1438,9 @@ function undoLast(){
   S._strokeOpen=false;
   S.actions.pop();
   rebuildState();
+  // ย้อนแล้ว: ถ้ายังจบโต๊ะอยู่ -> กลับหน้าตรวจ, ไม่งั้นกลับไปยิงต่อ
+  if(isTableFinished()){ S.finished=true; renderEndReview(); }
+  else { S.finished=false; S.phase="shoot"; renderShoot(); }
 }
 
 function rebuildState(){
@@ -1446,12 +1454,14 @@ function rebuildState(){
     S._strokeOpen = !!a.sameStroke;
     const sh=currentShooter();
     if(a.miss){
-      S.actions.push({miss:true, by:sh});
-      S.log.push(`[${S.players[sh].name}] ยิงพลาด`);
+      const m=(a.by!=null)?a.by:sh;
+      S.actions.push({miss:true, by:m});
+      S.log.push(`[${S.players[m].name}] ยิงพลาด`);
     } else if(a.scratch){
-      const msg=applyScratch(sh);
-      S.actions.push({scratch:true, by:sh});
-      S.log.push(`[${S.players[sh].name}] ${msg}`);
+      const m=(a.by!=null)?a.by:sh;
+      const msg=applyScratch(m);
+      S.actions.push({scratch:true, by:m});
+      S.log.push(`[${S.players[m].name}] ${msg}`);
     } else {
       const cont=!!a.sameStroke;
       const msg=applyPotScore(a.n, sh);
@@ -1461,7 +1471,69 @@ function rebuildState(){
     }
   });
   S._strokeOpen=false;
-  renderShoot();
+}
+
+/* หน้าตรวจก่อนบันทึก: ยังไม่ลง session/HOF จนกว่าจะกด "บันทึกผล"
+   - แก้เคส "ยิงลูกสุดท้ายลง แต่ลูกขาวลงด้วย" -> ใส่โทษลูกขาวให้คนยิงลูกสุดท้ายได้
+   - แก้เคส "กดผิดที่ลูกสุดท้าย" -> ย้อนกลับไปยิงใหม่ได้ */
+function renderEndReview(){
+  const A=app(); A.innerHTML="";
+  S.phase="review"; S.finished=true;
+  A.appendChild(el(`<div class="card center"><h2>🏁 ตากำลังจะจบ</h2>
+    <div class="muted">ตรวจ/แก้ให้เรียบร้อยก่อนกดบันทึกผล</div></div>`));
+
+  const acts=S.actions;
+  const last=acts[acts.length-1];
+  const scratched=!!(last && last.scratch);
+  // คนที่ยิงลูกสุดท้าย (ข้ามโทษลูกขาว/พลาดที่ต่อท้าย)
+  let lastBy=null;
+  for(let i=acts.length-1;i>=0;i--){ const a=acts[i]; if(!a.scratch && !a.miss){ lastBy=a.by; break; } }
+  if(lastBy==null) lastBy = last ? last.by : currentShooter();
+  const lbName = S.players[lastBy] ? S.players[lastBy].name : "";
+  const sc = S.players[lastBy] ? S.players[lastBy].hc.scratch : UNIT;
+
+  const card=el(`<div class="card">
+    <button class="btn-ghost foul-btn" id="rvScratch" style="width:100%${scratched?';border-color:var(--danger);color:var(--danger)':''}">
+      ${scratched
+        ? `✔ ใส่โทษลูกขาวแล้ว — ${esc(lbName)} เสีย ${sc} แต้ม/คน · กดเพื่อยกเลิก`
+        : `⚪ ลูกขาวลงด้วย — ปรับ ${esc(lbName)} เสีย ${sc} แต้ม/คน`}
+    </button>
+    <div class="spacer"></div>
+    <button class="btn-ghost" id="rvUndo" style="width:100%">↩ กดผิด — ย้อนกลับไปแก้ลูกสุดท้าย</button>
+  </div>`);
+  A.appendChild(card);
+
+  A.appendChild(renderScoreCard());
+
+  const doneCard=el(`<div class="card">
+    <button class="btn-primary" id="rvDone" style="width:100%">✅ จบตา · บันทึกผล</button>
+    <div class="hint" style="text-align:center;margin-top:8px;color:var(--accent)">ผลจะยังไม่ถูกบันทึกจนกว่าจะกดปุ่มนี้</div>
+  </div>`);
+  A.appendChild(doneCard);
+
+  if(S.log.length){
+    A.appendChild(el(`<div class="card"><h2>บันทึกทั้งตา</h2><div class="log">${logHTML(S.log)}</div></div>`));
+  }
+
+  card.querySelector("#rvScratch").addEventListener("click",()=>{
+    if(scratched){
+      S.actions.pop(); rebuildState(); renderEndReview();
+    } else {
+      sfx("scratch");
+      speak(shotPhrase("scratch", lbName, "", S.players[lastBy].hc));
+      S.actions.push({scratch:true, by:lastBy});
+      rebuildState(); renderEndReview();
+    }
+  });
+  card.querySelector("#rvUndo").addEventListener("click",()=>{
+    // เอาโทษลูกขาวที่เพิ่งใส่ออกก่อน (ถ้ามี) แล้วถอยลูกสุดท้ายออก กลับไปหน้ายิง
+    if(S.actions.length && S.actions[S.actions.length-1].scratch) S.actions.pop();
+    if(S.actions.length) S.actions.pop();
+    S._strokeOpen=false; S.finished=false; S.phase="shoot";
+    rebuildState();
+    renderShoot();
+  });
+  doneCard.querySelector("#rvDone").addEventListener("click",endRound);
 }
 
 function endRound(){
