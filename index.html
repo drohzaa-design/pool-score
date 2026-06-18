@@ -163,12 +163,16 @@
 
   body.tv .card{padding:16px}
   body.tv #app .card h2{font-size:22px;margin:0 0 8px}
-  body.tv #app table{font-size:20px;width:100%}
-  body.tv #app table th,body.tv #app table td{padding:5px 10px}
+  body.tv #app table{font-size:20px;width:100%;line-height:1.25}
+  body.tv #app table th,body.tv #app table td{padding:.28em .55em}
+  /* ตารางฝั่งขวา (แต้มตานี้/รอบนี้) ปรับขนาดฟอนต์อัตโนมัติให้พอดีจอ รองรับผู้เล่นเยอะ (สูงสุด 13 คน) ไม่ต้องเลื่อน */
+  body.tv .tv-col.fit{--tvfs:20px}
+  body.tv .tv-col.fit .card h2{font-size:clamp(15px,var(--tvfs),22px)}
+  body.tv .tv-col.fit .card table{font-size:var(--tvfs)}
   body.tv .pill{font-size:16px;padding:3px 12px}
   body.tv .muted{font-size:16px}
   body.tv .tv-name{font-size:48px;font-weight:800;color:var(--accent);margin:4px 0;line-height:1.05}
-  body.tv .tv-order{font-size:20px;margin-top:6px}
+  body.tv .tv-order{font-size:18px;margin-top:6px;line-height:1.4}
 
   body.tv .tv-board{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;overflow:hidden}
   body.tv .tv-board .grid{flex:0 0 auto;align-content:center;gap:8px;
@@ -562,6 +566,27 @@ function tvSessionCard(ses){
   html+=`</table>`;
   return el(`<div class="card"><h2>📅 รอบนี้</h2>${html}</div>`);
 }
+/* ตารางรวม: แต้มตานี้ + รอบนี้ ในตารางเดียว (รองรับผู้เล่นเยอะ สูงสุด 13 คน ไม่ต้องเลื่อน) */
+function tvStandingsCard(livePlayers, ses, win){
+  ses=ses||{}; const sp=ses.players||{};
+  const live=livePlayers&&livePlayers.length?livePlayers:null;
+  const map={};
+  if(live) live.forEach(p=>{ const k=p.name; (map[k]=map[k]||{name:k}).now=(p.net||0); });
+  Object.keys(sp).forEach(n=>{ (map[n]=map[n]||{name:n}).rnd=(sp[n].net||0); });
+  let rows=Object.keys(map).map(k=>map[k]);
+  if(!rows.length) return el(`<div class="card"><h2>📊 แต้ม</h2><div class="muted">ยังไม่มีข้อมูล</div></div>`);
+  const sortKey=live?"now":"rnd";
+  rows.sort((a,b)=>((b[sortKey]||0)-(a[sortKey]||0)));
+  const cell=v=> v==null ? '<span class="muted">–</span>' : `<span class="${v>0?'pos':v<0?'neg':''}">${v>0?'+':''}${v}</span>`;
+  const title=live?"📊 แต้มตานี้ · รอบนี้":"📅 รอบนี้";
+  let html=`<table><tr><th>#</th><th>ผู้เล่น</th>${live?'<th>ตานี้</th>':''}<th>รอบนี้</th></tr>`;
+  rows.forEach((r,i)=>{
+    const rank=win&&i===0?'🏆':(i+1);
+    html+=`<tr${win&&i===0?' style="font-weight:800"':''}><td>${rank}</td><td>${esc(r.name)}</td>${live?`<td>${cell(r.now==null?null:r.now)}</td>`:''}<td>${cell(r.rnd==null?null:r.rnd)}</td></tr>`;
+  });
+  html+=`</table>`;
+  return el(`<div class="card"><h2>${title}</h2>${html}</div>`);
+}
 function tvHofCard(hof){
   const players=(hof&&hof.players)||{};
   const entries=Object.entries(players);
@@ -643,26 +668,35 @@ function renderTV(data){
     bc.appendChild(el(bh));
     left.appendChild(bc);
     left.appendChild(tvLogCard(live.log));
-    right.appendChild(tvScoreCard(live.players));
-    right.appendChild(tvSessionCard(data&&data.session));
+    right.appendChild(tvStandingsCard(live.players, data&&data.session));
   } else if(live.active && live.phase==="result"){
     left.appendChild(el(`<div class="card center tv-banner"><div class="tv-name">🏁 จบตา!</div></div>`));
     left.appendChild(tvLogCard(live.log));
-    right.appendChild(tvScoreCard(live.players, true));
-    right.appendChild(tvSessionCard(data&&data.session));
+    right.appendChild(tvStandingsCard(live.players, data&&data.session, true));
   } else if(live.active && live.phase==="entry"){
     left.appendChild(el(`<div class="card center tv-banner" style="flex:1;display:flex;flex-direction:column;justify-content:center"><div class="tv-name">🤫 กำลังแจกไพ่ลับ...</div>
       <div class="muted">รอผู้เล่นดูเลขของตัวเองให้ครบก่อนเริ่มยิง</div></div>`));
-    right.appendChild(tvSessionCard(data&&data.session));
+    right.appendChild(tvStandingsCard(null, data&&data.session));
   } else {
     left.appendChild(el(`<div class="card center tv-banner" style="flex:1;display:flex;flex-direction:column;justify-content:center"><div class="tv-name">🎱 พร้อมเล่น</div>
       <div class="muted">รอเริ่มตาใหม่จากมือถือ</div></div>`));
-    right.appendChild(tvSessionCard(data&&data.session));
+    right.appendChild(tvStandingsCard(null, data&&data.session));
   }
 
   stage.appendChild(left);
   stage.appendChild(right);
   A.appendChild(stage);
+  tvFitRight(right);   // ย่อฟอนต์ตารางขวาให้พอดี ไม่ต้องเลื่อน (รองรับผู้เล่นเยอะ)
+}
+/* ลดขนาดฟอนต์ตารางคอลัมน์ขวาทีละ 1px จนกว่าจะไม่ล้นกล่อง (สูงสุด 13 คน) */
+function tvFitRight(right){
+  if(!right) return;
+  const cards=[].slice.call(right.querySelectorAll(".card"));
+  if(!cards.length) return;
+  const overflow=()=>cards.some(c=>c.scrollHeight>c.clientHeight+1);
+  let fs=20;
+  right.style.setProperty("--tvfs", fs+"px");
+  while(fs>10 && overflow()){ fs--; right.style.setProperty("--tvfs", fs+"px"); }
 }
 
 /* ---------------- game state ---------------- */
