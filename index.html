@@ -151,7 +151,7 @@
   body.tv h1{font-size:26px;margin:0}
   body.tv .sub{font-size:15px;margin:2px 0 10px}
   body.tv #app{flex:1 1 auto;min-height:0;display:flex}
-  body.tv #muteBtn{display:none}
+  body.tv #muteBtn{display:block;width:54px;height:54px;font-size:24px;top:16px;right:20px}
 
   body.tv .tv-stage{display:grid;gap:16px;width:100%;height:100%;min-height:0}
   body.tv .tv-stage.live{grid-template-columns:1.3fr 1fr}
@@ -518,6 +518,21 @@ function tvBoot(){
   renderTV({});
   _cloudDoc.onSnapshot(snap=>{ if(snap.exists) renderTV(snap.data()); },
     err=>console.warn("tv listen err", err));
+  tvSoundGate();
+}
+/* ปุ่มเปิดเสียงครั้งแรก (เบราว์เซอร์ต้องมี gesture ก่อนเล่นเสียงได้) */
+function tvSoundGate(){
+  const ov=el(`<div class="overlay" style="animation:none;background:rgba(0,0,0,.9)"><div class="overlay-box" style="border-color:var(--accent)">
+    <div style="font-size:54px">📺🔊</div>
+    <h2 style="color:var(--accent)">เปิดเสียงบนทีวี?</h2>
+    <p>กดเปิดเพื่อให้มีเสียงเอฟเฟกต์และเสียงพากย์ตอนยิงลูก<br>(เปลี่ยนภายหลังได้ที่ปุ่มมุมขวาบน)</p>
+    <button class="btn-primary" id="tvSndOn" style="width:100%">🔊 เปิดเสียง</button>
+    <div class="spacer"></div>
+    <button class="btn-ghost" id="tvSndOff" style="width:100%">🔇 ดูแบบเงียบ</button>
+  </div></div>`);
+  document.body.appendChild(ov);
+  ov.querySelector("#tvSndOn").addEventListener("click",()=>{ tvUnlockSound(); ov.remove(); });
+  ov.querySelector("#tvSndOff").addEventListener("click",()=>{ setMuted(true); ov.remove(); });
 }
 function tvBall(n, b){
   b=b||{}; const def=BALL[n];
@@ -564,9 +579,52 @@ function tvLogCard(log){
   const body=log.length?`<div class="log">${logHTML(log)}</div>`:`<div class="muted">ยังไม่มีการยิง</div>`;
   return el(`<div class="card tv-logcard"><h2>📝 บันทึกการยิง</h2>${body}</div>`);
 }
+/* ---- เสียงฝั่งทีวี: ตรวจ log ที่เพิ่มเข้ามาแล้วเล่นเอฟเฟกต์/พากย์ ---- */
+let _tvSoundOn=false, _tvPrevLog=null, _tvPrevPhase=null;
+function tvUnlockSound(){
+  try{
+    _audioCtx = _audioCtx || new (window.AudioContext||window.webkitAudioContext)();
+    if(_audioCtx.state==="suspended") _audioCtx.resume();
+  }catch(e){}
+  try{ if(typeof speechSynthesis!=="undefined"){ speechSynthesis.resume(); pickThaiVoice(); } }catch(e){}
+  _muted=false; _tvSoundOn=true;
+  const mb=document.getElementById("muteBtn"); if(mb){ mb.textContent="🔊"; mb.classList.remove("off"); }
+  sfx("own");   // เสียงทดสอบยืนยันว่าเปิดได้
+}
+/* แปลงบรรทัด log -> {sfx, say} */
+function tvSoundFromLine(line){
+  if(line.indexOf("[ลูกเหลือ]")===0) return null;                 // เป็นรายละเอียดของโบนัส ข้าม
+  if(line.indexOf("แจกแต้มเลขที่เหลือ")>=0) return {sfx:"bonus"};   // หัวข้อโบนัสลูกเหลือ
+  let s=null;
+  if(line.indexOf("ลูกขาว")>=0) s="scratch";
+  else if(line.indexOf("ยิงพลาด")>=0) s=null;                     // พลาด: ไม่มีเอฟเฟกต์ (พูดอย่างเดียว)
+  else if(line.indexOf("แต้มพิเศษ")>=0) s="special";
+  else if(line.indexOf("เลขของตัวเอง")>=0) s="own";
+  else if(line.indexOf("ลูกหลอก")>=0) s="decoy";
+  else if(line.indexOf("เลขของ")>=0) s="steal";                   // ต้องเช็คหลัง "เลขของตัวเอง"
+  const say=line.replace(/[\[\]⭐🫥⚪→=•·—]/g," ").replace(/\s+/g," ").trim();
+  return {sfx:s, say};
+}
+function tvPlaySounds(live){
+  if(!_tvSoundOn) return;
+  const log=(live&&live.log)||[];
+  const phase=live&&live.phase;
+  if(_tvPrevLog===null){ _tvPrevLog=log.slice(); _tvPrevPhase=phase; return; }  // ครั้งแรก = ตั้งฐาน ไม่เล่นย้อนหลัง
+  if(log.length>_tvPrevLog.length){
+    log.slice(_tvPrevLog.length).forEach(line=>{
+      const r=tvSoundFromLine(line); if(!r) return;
+      if(r.sfx) sfx(r.sfx);
+      if(r.say) speak(r.say);
+    });
+  }
+  if(phase==="result" && _tvPrevPhase!=="result") sfx("end");
+  _tvPrevLog=log.slice();
+  _tvPrevPhase=phase;
+}
 function renderTV(data){
   const A=app(); A.innerHTML="";
   const live=(data&&data.live)||{active:false};
+  tvPlaySounds(live);
   const isLive = live.active && (live.phase==="shoot"||live.phase==="review");
   const stage=el(`<div class="tv-stage ${isLive?'live':'full'}"></div>`);
   const left=el(`<div class="tv-col"></div>`);
@@ -2023,7 +2081,7 @@ function renderResult(){
   const btn=document.getElementById("muteBtn");
   const sync=()=>{ btn.textContent=_muted?"🔇":"🔊"; btn.classList.toggle("off",_muted); };
   sync();
-  btn.addEventListener("click",()=>{ setMuted(!_muted); sync(); if(_muted){ try{speechSynthesis.cancel();}catch(e){} } else { sfx("own"); } });
+  btn.addEventListener("click",()=>{ setMuted(!_muted); sync(); if(_muted){ try{speechSynthesis.cancel();}catch(e){} } else { _tvSoundOn=true; sfx("own"); } });
 })();
 if(TV_MODE){
   tvBoot();        // โหมดทีวี: อ่านอย่างเดียว แสดงกระดานสด + อันดับ
