@@ -144,6 +144,12 @@
     padding:26px 20px;text-align:center;max-width:420px;width:100%}
   .overlay-box h2{color:var(--danger);margin:6px 0 10px}
   .overlay-box p{color:var(--muted);font-size:15px;margin:0 0 18px}
+  .overlay.invite{animation:none;background:rgba(0,0,0,.86)}
+  .overlay-box.invite{border-color:var(--accent)}
+  .overlay-box.invite h2{color:var(--accent)}
+  .overlay-box.invite p{margin:0 0 12px}
+  .qrbox{background:#fff;padding:12px;border-radius:12px;display:inline-block;margin:4px 0}
+  .qrbox svg{width:220px;height:220px;display:block}
   /* ---- โหมดทีวี (จอใหญ่ แนวกว้าง ไม่ต้องเลื่อนจอ) ---- */
   body.tv{overflow:hidden;height:100vh}
   body.tv .wrap{max-width:none;width:100vw;height:100vh;box-sizing:border-box;padding:18px 22px;
@@ -198,6 +204,8 @@
 <!-- Firebase (cloud sync) -->
 <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
+<!-- QR generator (สร้าง QR ฝั่งเครื่อง ไม่ส่งกุญแจออกไปไหน) -->
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
 
 <script>
 "use strict";
@@ -352,6 +360,38 @@ const firebaseConfig = {
 const CLOUD_COL="pool", CLOUD_DOC="shared";
 let _db=null, _cloudDoc=null, _cloudOK=false, _applyingRemote=false, _pushTimer=null;
 
+/* ---------------- multi-controller: identity + crypto ----------------
+   หลายมือถือช่วยกันคุม "ตาที่กำลังเล่น" เดียวกันได้
+   - สถานะเกมเต็ม (มีเลขลับของผู้เล่น) ถูกเข้ารหัส AES-GCM ก่อนส่งขึ้นคลาวด์
+   - กุญแจถอดรหัสอยู่ใน QR ที่โชว์เฉพาะบนมือถือคนคุม (ไม่ขึ้นจอทีวีสาธารณะ)
+   - ทีวี (?tv=1) อ่านแค่ field สาธารณะ (live) เหมือนเดิม ไม่แตะ game ที่เข้ารหัส */
+let _clientId = (function(){
+  try{
+    let id=sessionStorage.getItem("pool_client");
+    if(!id){ id=Math.random().toString(36).slice(2)+Date.now().toString(36); sessionStorage.setItem("pool_client", id); }
+    return id;
+  }catch(e){ return Math.random().toString(36).slice(2); }
+})();
+const _subtle = (window.crypto && window.crypto.subtle) ? window.crypto.subtle : null;
+function _b64FromBytes(bytes){ let s=""; bytes.forEach(b=>s+=String.fromCharCode(b)); return btoa(s); }
+function _bytesFromB64(b64){ const s=atob(b64); const a=new Uint8Array(s.length); for(let i=0;i<s.length;i++)a[i]=s.charCodeAt(i); return a; }
+function _b64url(b64){ return b64.replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,""); }
+function _b64urlBack(s){ s=s.replace(/-/g,"+").replace(/_/g,"/"); while(s.length%4)s+="="; return s; }
+async function genGameKey(){ return _subtle.generateKey({name:"AES-GCM",length:256},true,["encrypt","decrypt"]); }
+async function exportGameKey(key){ const raw=await _subtle.exportKey("raw",key); return _b64url(_b64FromBytes(new Uint8Array(raw))); }
+async function importGameKey(b64){ return _subtle.importKey("raw",_bytesFromB64(_b64urlBack(b64)),{name:"AES-GCM"},true,["encrypt","decrypt"]); }
+async function encryptJSON(key,obj){
+  const iv=window.crypto.getRandomValues(new Uint8Array(12));
+  const data=new TextEncoder().encode(JSON.stringify(obj));
+  const ct=await _subtle.encrypt({name:"AES-GCM",iv},key,data);
+  return { iv:_b64FromBytes(iv), ct:_b64FromBytes(new Uint8Array(ct)) };
+}
+async function decryptJSON(key,enc){
+  const iv=_bytesFromB64(enc.iv), ct=_bytesFromB64(enc.ct);
+  const pt=await _subtle.decrypt({name:"AES-GCM",iv},key,ct);
+  return JSON.parse(new TextDecoder().decode(pt));
+}
+
 function cloudInit(){
   try{
     if(typeof firebase==="undefined") return false;
@@ -439,6 +479,14 @@ function cloudListen(){
   _cloudDoc.onSnapshot(snap=>{
     if(!snap.exists) return;
     const remote=snap.data();
+    // --- รับสถานะ "ตาที่กำลังเล่น" จากเครื่องอื่นที่คุมตาเดียวกัน ---
+    // ใช้ ver (ตัวนับลอจิก) เป็นหลัก กันปัญหานาฬิกาเครื่องไม่ตรงกัน
+    const g=remote.game;
+    if(g && g.active && g.id===_gameId && _gameKey && g.by!==_clientId && (g.ver||0)>_gameVer && g.iv){
+      applyRemoteGame(g);
+    }
+    handleJoinState(g);   // เครื่องที่มีตา active แต่ไม่มีกุญแจ -> โชว์ปุ่มเข้าร่วม
+    // --- ข้อมูลกลุ่ม (ชื่อ/รอบนี้/HOF) ---
     if(isEmptyData(remote)) return;
     const merged=mergeData(localSnapshot(), remote);
     applyToLocal(merged);
@@ -516,6 +564,154 @@ function syncLive(){
     try{ await _cloudDoc.set({live:snap}, {merge:true}); }
     catch(e){ console.warn("live push failed", e); }
   }, 250);
+}
+
+/* ============================================================
+   MULTI-CONTROLLER — หลายมือถือช่วยกันคุมตาเดียวกัน (สถานะเกมเข้ารหัส)
+============================================================ */
+const K_CTRL="pool_ctrl"; // {gameId, keyB64} กุญแจของตาที่กำลังคุม (เก็บในเครื่องคนคุม)
+let _gameId=null, _gameKey=null, _gameKeyB64=null;
+let _gameVer=0, _lastGameTs=0, _lastGameKey=null, _gameTimer=null, _applyingGame=false;
+
+/* สร้างกุญแจ+รหัสตา ตอนเริ่มเกมใหม่ (เครื่องที่กดเริ่ม = คนคุมคนแรก) */
+async function startCloudGame(){
+  if(!_subtle){ _gameId=null; _gameKey=null; return; }
+  try{
+    _gameKey=await genGameKey();
+    _gameKeyB64=await exportGameKey(_gameKey);
+    _gameId=Math.random().toString(36).slice(2,8);
+    _gameVer=0; _lastGameTs=0; _lastGameKey=null;
+    lsSet(K_CTRL, {gameId:_gameId, keyB64:_gameKeyB64});
+  }catch(e){ console.warn("startCloudGame failed", e); _gameId=null; _gameKey=null; }
+}
+/* เลิกคุม (กลับหน้าหลัก/จบเกม) — ล้างกุญแจในเครื่อง + แจ้งคลาวด์ว่าตาไม่ active */
+function clearCloudGame(){
+  const had=_gameId;
+  _gameId=null; _gameKey=null; _gameKeyB64=null; _gameVer=0; _lastGameTs=0; _lastGameKey=null;
+  clearTimeout(_gameTimer);
+  try{ lsSet(K_CTRL, null); }catch(e){}
+  if(had && _cloudOK){ try{ _cloudDoc.set({game:{active:false, ts:Date.now(), by:_clientId}}, {merge:true}); }catch(e){} }
+}
+/* กู้กุญแจที่เก็บไว้ตอนเปิดแอป (เครื่องคนคุมรีเฟรชแล้วยังคุมต่อได้) */
+async function restoreCtrlKey(){
+  if(!_subtle) return;
+  const c=lsGet(K_CTRL, null);
+  if(c && c.gameId && c.keyB64){
+    try{ _gameId=c.gameId; _gameKeyB64=c.keyB64; _gameKey=await importGameKey(c.keyB64); }
+    catch(e){ _gameId=null; _gameKey=null; }
+  }
+}
+
+/* ส่งสถานะเกมเต็ม (เข้ารหัส) ขึ้นคลาวด์ — เฉพาะเครื่องที่ถือกุญแจ, debounce */
+function syncGame(){
+  if(TV_MODE || !_cloudOK || !_gameKey || !_gameId || !S) return;
+  if(_applyingGame) return;                 // กำลัง apply ของรีโมต -> อย่าเขียนสะท้อนกลับ
+  const stateStr=JSON.stringify(S);
+  if(stateStr===_lastGameKey) return;       // ไม่มีอะไรเปลี่ยน
+  _lastGameKey=stateStr;
+  clearTimeout(_gameTimer);
+  _gameTimer=setTimeout(async ()=>{
+    try{
+      const enc=await encryptJSON(_gameKey, JSON.parse(stateStr));
+      _gameVer++;
+      const ts=Date.now();
+      _lastGameTs=ts;
+      await _cloudDoc.set({game:{id:_gameId, ver:_gameVer, by:_clientId, active:true, ts, iv:enc.iv, ct:enc.ct}}, {merge:true});
+    }catch(e){ console.warn("game push failed", e); }
+  }, 250);
+}
+
+/* รับสถานะเกมจากเครื่องอื่น (ที่คุมตาเดียวกัน) แล้ว apply */
+async function applyRemoteGame(g){
+  if(!_gameKey || !g || !g.iv) return;
+  // อย่าเด้งจอตอนกำลังพิมพ์ (กรอกเลข) หรือมี popup เปิดอยู่
+  const ae=document.activeElement;
+  if(ae && (ae.tagName==="INPUT"||ae.tagName==="TEXTAREA")) return;
+  if(document.querySelector(".overlay")) return;
+  _applyingGame=true;
+  try{
+    const state=await decryptJSON(_gameKey, g);
+    S=state;
+    _gameVer=g.ver||_gameVer;
+    _lastGameTs=g.ts||Date.now();
+    _lastGameKey=JSON.stringify(S);   // กันส่งสะท้อนกลับทันที
+    entryGateOpen=false;
+    renderGame();
+  }catch(e){ console.warn("apply remote game failed", e); }
+  finally{ _applyingGame=false; }
+}
+
+/* เลือกหน้าจอให้ตรงกับเฟสของ S (ใช้ตอน apply สถานะจากเครื่องอื่น) */
+function renderGame(){
+  if(!S){ renderSetup(); return; }
+  try{
+    if(S.phase==="result") renderResult();
+    else if(S.phase==="review") renderEndReview();
+    else if(S.phase==="entry") renderEntry();
+    else renderShoot();
+  }catch(e){ console.warn("renderGame failed", e); }
+}
+
+/* ลิงก์เชิญเพื่อนมาช่วยคุม (มีกุญแจถอดรหัสฝังใน #join — ใช้กับ QR บนมือถือคนคุมเท่านั้น) */
+function joinUrl(){
+  if(!_gameId || !_gameKeyB64) return null;
+  return location.origin+location.pathname+"#join="+_gameId+"."+_gameKeyB64;
+}
+/* ปุ่มเล็ก "ให้เพื่อนมาช่วยคุม" สำหรับวางในหน้าจอเล่น */
+function inviteButton(){
+  if(!_gameId || !_gameKeyB64) return null;
+  const b=el(`<button class="btn-ghost" style="width:100%;margin-bottom:12px">📲 ให้เพื่อนมาช่วยคุม (สแกน QR)</button>`);
+  b.addEventListener("click", showInviteQR);
+  return b;
+}
+/* โชว์ QR + ลิงก์เชิญ (บนมือถือคนคุม) */
+function showInviteQR(){
+  const url=joinUrl();
+  if(!url){ alert("ตานี้ยังไม่พร้อมให้เข้าร่วม (อุปกรณ์ไม่รองรับการเข้ารหัส?)"); return; }
+  const existing=document.querySelector(".overlay"); if(existing) existing.remove();
+  const ov=el(`<div class="overlay invite"></div>`);
+  let qrHtml="";
+  try{
+    if(typeof qrcode!=="undefined"){
+      const qr=qrcode(0,"M"); qr.addData(url); qr.make();
+      qrHtml=`<div class="qrbox">${qr.createSvgTag({cellSize:5,margin:1,scalable:true})}</div>`;
+    }
+  }catch(e){ qrHtml=""; }
+  const box=el(`<div class="overlay-box invite">
+    <h2>📲 ให้เพื่อนมาช่วยคุม</h2>
+    <p>ให้เพื่อน <b>สแกน QR นี้ด้วยกล้องมือถือ</b> เพื่อเข้ามาคุมตานี้ร่วมกัน<br>
+    เผื่อใครแบตจะหมด/ขี้เกียจอัพเดท ก็สลับกันยิงต่อได้ทันที</p>
+    ${qrHtml || '<p class="muted">สร้าง QR ไม่ได้ (ออฟไลน์?) ใช้ลิงก์ด้านล่างแทน</p>'}
+    <p style="color:var(--warn);font-size:13px;margin:12px 0 0">⚠️ อย่าโชว์ QR/ลิงก์นี้บนทีวีหรือจอสาธารณะ — ในนี้มีกุญแจที่เปิดดูเลขลับได้</p>
+    <div class="row" style="gap:8px;margin-top:12px">
+      <input type="text" id="invUrl" readonly value="${esc(url)}" style="flex:1">
+      <button class="btn-blue" id="invCopy" style="width:auto;padding:8px 14px">คัดลอก</button>
+    </div>
+    <div class="spacer"></div>
+    <button class="btn-ghost" id="invClose" style="width:100%">ปิด</button>
+  </div>`);
+  ov.appendChild(box); document.body.appendChild(ov);
+  box.querySelector("#invClose").addEventListener("click",()=>ov.remove());
+  ov.addEventListener("click",e=>{ if(e.target===ov) ov.remove(); });
+  box.querySelector("#invCopy").addEventListener("click",()=>{
+    const inp=box.querySelector("#invUrl"); inp.select();
+    try{ navigator.clipboard.writeText(url); }catch(e){ try{document.execCommand("copy");}catch(_){} }
+    const bb=box.querySelector("#invCopy"); const o=bb.textContent; bb.textContent="คัดลอกแล้ว ✓"; setTimeout(()=>bb.textContent=o,1500);
+  });
+}
+
+/* สถานะ "มีตา active ที่เรายังคุมไม่ได้" (ไม่มีกุญแจ) -> โชว์แบนเนอร์ชวนสแกนเข้าร่วม */
+let _foreignGame=false;
+function handleJoinState(g){
+  const hasActive = !!(g && g.active && g.id);
+  const canControl = hasActive && _gameKey && g.id===_gameId;
+  const next = hasActive && !canControl;
+  if(next===_foreignGame) return;
+  _foreignGame=next;
+  // อยู่หน้าเล่นและไม่ได้อยู่ในเกม -> refresh เพื่อโชว์/ซ่อนแบนเนอร์
+  const ae=document.activeElement;
+  const typing=ae && (ae.tagName==="INPUT"||ae.tagName==="TEXTAREA");
+  if(S===null && homeTab==="play" && !typing){ try{ renderSetup(); }catch(e){} }
 }
 
 /* ---- ฝั่งทีวี: เชื่อมคลาวด์แล้ว render ตาม snapshot ---- */
@@ -891,6 +1087,14 @@ function renderPlayTab(A){
   let hcBox=null; // กล่องตั้งค่า "ต่อให้รายคน" (อัปเดตเมื่อเลือก/เพิ่มคน)
   const refreshHC=()=>{ if(hcBox) renderHandicaps(hcBox); };
 
+  // มีตากำลังเล่นอยู่ (เพื่อนเริ่มไว้) แต่เครื่องนี้ยังไม่มีกุญแจ -> ชวนสแกนเข้าร่วม
+  if(_foreignGame){
+    A.appendChild(el(`<div class="card" style="border-color:var(--accent)">
+      <h2 style="color:var(--accent)">🎮 มีเกมกำลังเล่นอยู่</h2>
+      <div class="hint">เพื่อนเริ่มตาไว้แล้ว ถ้าอยากมาช่วยคุม ให้ <b>สแกน QR จากมือถือคนที่กำลังคุม</b> (ปุ่ม "📲 ให้เพื่อนมาช่วยคุม" ในหน้ายิง) แล้วจะเข้ามายิงต่อได้เลย</div>
+    </div>`));
+  }
+
   // ปุ่มเปิดโหมดทีวี (เอาขึ้นจอใหญ่เป็นผู้ชม)
   const tvUrl=location.origin+location.pathname+"?tv=1";
   const tvCard=el(`<div class="card"><h2>📺 โหมดทีวี</h2>
@@ -1013,13 +1217,14 @@ function renderPlayTab(A){
     <div class="err" id="startErr"></div>
   </div>`);
   A.appendChild(c3);
-  c3.querySelector("#start").addEventListener("click",()=>{
+  c3.querySelector("#start").addEventListener("click",async ()=>{
     const err=c3.querySelector("#startErr"); err.textContent="";
     if(setupSelected.length<2){ err.textContent="ต้องมีผู้เล่นอย่างน้อย 2 คน"; return; }
     if(!setupCards||setupCards<1){ err.textContent="กรอกจำนวนไพ่ต่อคน"; return; }
     const total=setupSelected.length*setupCards;
     if(total>13){ err.textContent=`รวม ${total} ใบ เกิน 13 (ลดจำนวนคนหรือไพ่ต่อคน)`; return; }
     if(setupContMode==="limited" && (!setupContLimit||setupContLimit<1)){ err.textContent="กรอกจำนวนยิงติดกันสูงสุด"; return; }
+    await startCloudGame();   // สร้างกุญแจ/รหัสตา ก่อนเริ่ม เพื่อให้เพื่อนมาช่วยคุมได้
     S=newGameState(setupSelected.map(n=>({name:n, hc:setupHC[n]})), setupCards, setupContMode, setupContLimit, setupDealMode);
     if(S.dealMode==="random") dealHands();
     renderEntry();
@@ -1280,7 +1485,7 @@ function renderHOFTab(A){
 let entryGateOpen=false;
 function renderEntry(){
   const A=app(); A.innerHTML="";
-  syncLive();
+  syncLive(); syncGame();
   const i=S.entryIndex;
   if(i>=S.P){ // done -> build owners, สุ่มลำดับการเล่นทั้งหมด, then shoot
     buildOwners();
@@ -1449,7 +1654,7 @@ function revealMyNumbers(sh){
 
 function renderShoot(){
   const A=app(); A.innerHTML="";
-  syncLive();
+  syncLive(); syncGame();
   const {sh, streak, pos}=turnState();
 
   // turn display (random first, then pot=continue / miss=pass)
@@ -1478,6 +1683,7 @@ function renderShoot(){
     revBtn.addEventListener("click",()=>revealMyNumbers(sh));
     A.appendChild(revBtn);
   }
+  { const ib=inviteButton(); if(ib) A.appendChild(ib); }
 
   // โบนัสลูกเหลือ: แบนเนอร์ค้างไว้ให้เห็นชัดจนจบตา
   if(S.leftoverDone){
@@ -1849,9 +2055,10 @@ function rebuildState(){
 function renderEndReview(){
   const A=app(); A.innerHTML="";
   S.phase="review"; S.finished=true;
-  syncLive();
+  syncLive(); syncGame();
   A.appendChild(el(`<div class="card center"><h2>🏁 ตากำลังจะจบ</h2>
     <div class="muted">ตรวจ/แก้ให้เรียบร้อยก่อนกดบันทึกผล</div></div>`));
+  { const ib=inviteButton(); if(ib) A.appendChild(ib); }
 
   const acts=S.actions;
   const last=acts[acts.length-1];
@@ -1994,7 +2201,7 @@ function editRosterNextRound(){
   setupSelected = S.players.map(p=>p.name);
   S.players.forEach(p=>{ setupHC[p.name]=Object.assign(defaultHC(), p.hc); });
   setupCards=S.cardsPer; setupContMode=S.contMode; setupContLimit=S.contLimit; setupDealMode=S.dealMode;
-  S=null; entryGateOpen=false; homeTab="play"; renderSetup();
+  S=null; entryGateOpen=false; clearCloudGame(); homeTab="play"; renderSetup();
 }
 /* รายละเอียดของ "ตานี้" (อันดับ + ใครได้จากใคร + บันทึก) */
 function renderRoundDetail(box){
@@ -2052,7 +2259,7 @@ function renderSessionSummary(box){
 }
 function renderResult(){
   const A=app(); A.innerHTML="";
-  syncLive();
+  syncLive(); syncGame();
   A.appendChild(el(`<div class="card center"><h2>🏁 จบตาแล้ว</h2>
     <div class="muted">หยิบคนละ ${S.cardsPer} ใบ · ${S.P} คน</div></div>`));
 
@@ -2090,8 +2297,8 @@ function renderResult(){
     <button class="btn-ghost" id="goHome" style="width:100%">🏠 กลับหน้าตั้งวง</button>
   </div>`);
   A.appendChild(nav);
-  nav.querySelector("#goSes").addEventListener("click",()=>{ S=null; entryGateOpen=false; homeTab="session"; renderSetup(); });
-  nav.querySelector("#goHome").addEventListener("click",()=>{ S=null; entryGateOpen=false; homeTab="play"; renderSetup(); });
+  nav.querySelector("#goSes").addEventListener("click",()=>{ S=null; entryGateOpen=false; clearCloudGame(); homeTab="session"; renderSetup(); });
+  nav.querySelector("#goHome").addEventListener("click",()=>{ S=null; entryGateOpen=false; clearCloudGame(); homeTab="play"; renderSetup(); });
 }
 
 /* ---------------- boot ---------------- */
@@ -2101,11 +2308,37 @@ function renderResult(){
   sync();
   btn.addEventListener("click",()=>{ setMuted(!_muted); sync(); if(_muted){ try{speechSynthesis.cancel();}catch(e){} } else { _tvSoundOn=true; sfx("own"); } });
 })();
+/* boot ฝั่ง controller (มือถือ) — รองรับการเข้าร่วมคุมเกมผ่านลิงก์ #join */
+async function controllerBoot(){
+  // 1) เข้าร่วมผ่านลิงก์ที่สแกนมา (#join=gameId.key)
+  const m=(location.hash||"").match(/join=([^.]+)\.(.+)$/);
+  if(m && _subtle){
+    try{
+      _gameId=decodeURIComponent(m[1]);
+      _gameKeyB64=decodeURIComponent(m[2]);
+      _gameKey=await importGameKey(_gameKeyB64);
+      lsSet(K_CTRL, {gameId:_gameId, keyB64:_gameKeyB64});
+    }catch(e){ console.warn("join import failed", e); _gameId=null; _gameKey=null; _gameKeyB64=null; }
+    try{ history.replaceState(null,"", location.pathname+location.search); }catch(e){}
+  } else {
+    await restoreCtrlKey();   // กู้กุญแจของตาที่เคยคุมไว้ (เครื่องคนคุมรีเฟรช)
+  }
+  renderSetup();   // แสดงข้อมูลในเครื่องทันที
+  await cloudBoot();   // sync ข้อมูลกลุ่ม (ชื่อ/รอบนี้/HOF)
+  // 2) มีกุญแจ + มีตา active บนคลาวด์ -> ดึงสถานะเกมมาคุมต่อทันที
+  if(_gameKey && _gameId && _cloudOK){
+    try{
+      const snap=await _cloudDoc.get();
+      const g=snap.exists ? snap.data().game : null;
+      if(g && g.active && g.id===_gameId && g.iv){ _lastGameTs=0; await applyRemoteGame(g); }
+      else if(!g || !g.active){ clearCloudGame(); }   // ตาจบไปแล้ว -> ทิ้งกุญแจเก่า
+    }catch(e){ console.warn("adopt game failed", e); }
+  }
+}
 if(TV_MODE){
   tvBoot();        // โหมดทีวี: อ่านอย่างเดียว แสดงกระดานสด + อันดับ
 } else {
-  renderSetup();   // แสดงข้อมูลในเครื่องทันที
-  cloudBoot();     // แล้วค่อย sync กับคลาวด์ (ดึงข้อมูลล่าสุด/กันข้อมูลหาย)
+  controllerBoot();
 }
 </script>
 </body>
