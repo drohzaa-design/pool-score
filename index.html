@@ -652,6 +652,33 @@ function renderGame(){
   }catch(e){ console.warn("renderGame failed", e); }
 }
 
+/* ยกเลิก/โล๊ะตาที่กำลังเล่น (ไม่บันทึกผลตานี้ · ยอดสะสมรอบนี้ + สถิติเดิมไม่หาย) */
+function cancelGame(){
+  S=null; entryGateOpen=false; clearCloudGame(); homeTab="play"; renderSetup();
+}
+function confirmCancelGame(){
+  const existing=document.querySelector(".overlay"); if(existing) existing.remove();
+  const ov=el(`<div class="overlay invite"></div>`);
+  const box=el(`<div class="overlay-box invite" style="border-color:var(--danger)">
+    <h2 style="color:var(--danger)">🗑️ ยกเลิกตานี้?</h2>
+    <p>ล้มตาที่กำลังเล่นทิ้งทั้งหมด · <b>แต้มของตานี้จะไม่ถูกบันทึก</b><br>
+    (ยอดสะสม "รอบนี้" และสถิติเดิมไม่หาย)</p>
+    <button class="btn-ghost foul-btn" id="cfYes" style="width:100%;border-color:var(--danger);color:var(--danger)">ใช่ ยกเลิกตานี้</button>
+    <div class="spacer"></div>
+    <button class="btn-primary" id="cfNo" style="width:100%">ไม่ เล่นต่อ</button>
+  </div>`);
+  ov.appendChild(box); document.body.appendChild(ov);
+  box.querySelector("#cfNo").addEventListener("click",()=>ov.remove());
+  ov.addEventListener("click",e=>{ if(e.target===ov) ov.remove(); });
+  box.querySelector("#cfYes").addEventListener("click",()=>{ ov.remove(); cancelGame(); });
+}
+/* ปุ่ม "ยกเลิกตานี้" สำหรับวางในหน้าจอเล่น */
+function abandonButton(){
+  const b=el(`<button class="btn-ghost" style="width:100%">🗑️ ยกเลิกตานี้ (โล๊ะ)</button>`);
+  b.addEventListener("click",confirmCancelGame);
+  return b;
+}
+
 /* ลิงก์เชิญเพื่อนมาช่วยคุม (มีกุญแจถอดรหัสฝังใน #join — ใช้กับ QR บนมือถือคนคุมเท่านั้น) */
 function joinUrl(){
   if(!_gameId || !_gameKeyB64) return null;
@@ -1507,6 +1534,7 @@ function renderEntry(){
     </div>`);
     A.appendChild(g);
     g.querySelector("#open").addEventListener("click",()=>{ entryGateOpen=true; renderEntry(); });
+    { const ac=el(`<div class="card"></div>`); ac.appendChild(abandonButton()); A.appendChild(ac); }
     return;
   }
 
@@ -1798,6 +1826,9 @@ function renderShoot(){
     A.appendChild(lc);
     lc.querySelector("#log").innerHTML=logHTML(S.log);
   }
+
+  // ยกเลิก/โล๊ะตานี้
+  { const ac=el(`<div class="card"></div>`); ac.appendChild(abandonButton()); A.appendChild(ac); }
 }
 
 function applyPotScore(n, sh){
@@ -2092,6 +2123,9 @@ function renderEndReview(){
   if(S.log.length){
     A.appendChild(el(`<div class="card"><h2>บันทึกทั้งตา</h2><div class="log">${logHTML(S.log)}</div></div>`));
   }
+
+  // ยกเลิก/โล๊ะตานี้
+  { const ac=el(`<div class="card"></div>`); ac.appendChild(abandonButton()); A.appendChild(ac); }
 
   card.querySelector("#rvScratch").addEventListener("click",()=>{
     if(scratched){
