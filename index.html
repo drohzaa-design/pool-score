@@ -630,6 +630,7 @@ async function applyRemoteGame(g){
   if(document.querySelector(".overlay")) return;
   _applyingGame=true;
   try{
+    const oldLog=(S && S.log) ? S.log.slice() : null;   // log ก่อนรับของใหม่
     const state=await decryptJSON(_gameKey, g);
     S=state;
     _gameVer=g.ver||_gameVer;
@@ -637,6 +638,17 @@ async function applyRemoteGame(g){
     _lastGameKey=JSON.stringify(S);   // กันส่งสะท้อนกลับทันที
     entryGateOpen=false;
     renderGame();
+    // เล่นเสียงให้เครื่องที่ "ดู" เพื่อนยิงด้วย (เฉพาะลูกที่ log งอกใหม่)
+    try{
+      const newLog=(S.log||[]);
+      if(oldLog && newLog.length>oldLog.length){
+        newLog.slice(oldLog.length).forEach(line=>{
+          const r=tvSoundFromLine(line); if(!r) return;
+          if(r.sfx) sfx(r.sfx);
+          if(r.say) speak(r.say);
+        });
+      }
+    }catch(e){}
   }catch(e){ console.warn("apply remote game failed", e); }
   finally{ _applyingGame=false; }
 }
@@ -2342,6 +2354,25 @@ function renderResult(){
   sync();
   btn.addEventListener("click",()=>{ setMuted(!_muted); sync(); if(_muted){ try{speechSynthesis.cancel();}catch(e){} } else { _tvSoundOn=true; sfx("own"); } });
 })();
+/* ปลดล็อกเสียงตอนผู้ใช้แตะจอครั้งแรก — เบราว์เซอร์มือถือ/ทีวีบังคับต้องมี gesture ก่อนถึงเล่นเสียงได้
+   (กันอาการ "ไม่ได้ปิดเสียงแต่ไม่มีเสียง" เพราะ AudioContext ยังค้างสถานะ suspended) */
+let _audioUnlocked=false;
+function unlockAudioOnce(){
+  if(_audioUnlocked) return;
+  try{
+    _audioCtx = _audioCtx || new (window.AudioContext||window.webkitAudioContext)();
+    if(_audioCtx.state==="suspended") _audioCtx.resume();
+    // โน้ตเงียบจิ๋ว เพื่อ "เปิด" ระบบเสียงบน iOS/Safari
+    const o=_audioCtx.createOscillator(), g=_audioCtx.createGain();
+    g.gain.value=0; o.connect(g); g.connect(_audioCtx.destination);
+    o.start(); o.stop(_audioCtx.currentTime+0.02);
+  }catch(e){}
+  try{ if(typeof speechSynthesis!=="undefined"){ speechSynthesis.resume(); pickThaiVoice(); } }catch(e){}
+  if(_audioCtx && _audioCtx.state==="running") _audioUnlocked=true;   // ปลดล็อกสำเร็จแล้วค่อยเลิกพยายาม
+}
+["pointerdown","touchend","click","keydown"].forEach(ev=>{
+  document.addEventListener(ev, unlockAudioOnce, {passive:true});
+});
 /* boot ฝั่ง controller (มือถือ) — รองรับการเข้าร่วมคุมเกมผ่านลิงก์ #join */
 async function controllerBoot(){
   // 1) เข้าร่วมผ่านลิงก์ที่สแกนมา (#join=gameId.key)
