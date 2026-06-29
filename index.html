@@ -158,6 +158,14 @@
   body.tv .sub{font-size:15px;margin:2px 0 10px}
   body.tv #app{flex:1 1 auto;min-height:0;display:flex}
   body.tv #muteBtn{display:block;width:54px;height:54px;font-size:24px;top:16px;right:20px}
+  /* แถบเปิดเสียงบนทีวี — ไม่บังกระดาน (กันค้างหน้าดำ) */
+  #tvSndBanner{position:fixed;left:16px;bottom:16px;z-index:60;
+    display:flex;align-items:center;gap:12px;background:rgba(20,22,30,.92);
+    border:2px solid var(--accent);border-radius:14px;padding:10px 14px;
+    font-size:19px;color:#fff;box-shadow:0 6px 24px rgba(0,0,0,.5);max-width:92vw}
+  #tvSndBanner button{font-size:18px;padding:8px 16px;border-radius:10px;border:none;cursor:pointer;font-weight:700}
+  #tvSndBanner #tvSndOn{background:var(--accent);color:#08210f}
+  #tvSndBanner #tvSndOff{background:transparent;color:#bbb;border:1px solid #555;padding:8px 12px}
 
   body.tv .tv-stage{display:grid;gap:16px;width:100%;height:100%;min-height:0}
   body.tv .tv-stage.live{grid-template-columns:1.3fr 1fr}
@@ -764,17 +772,19 @@ function tvBoot(){
 }
 /* ปุ่มเปิดเสียงครั้งแรก (เบราว์เซอร์ต้องมี gesture ก่อนเล่นเสียงได้) */
 function tvSoundGate(){
-  const ov=el(`<div class="overlay" style="animation:none;background:rgba(0,0,0,.9)"><div class="overlay-box" style="border-color:var(--accent)">
-    <div style="font-size:54px">📺🔊</div>
-    <h2 style="color:var(--accent)">เปิดเสียงบนทีวี?</h2>
-    <p>กดเปิดเพื่อให้มีเสียงเอฟเฟกต์และเสียงพากย์ตอนยิงลูก<br>(เปลี่ยนภายหลังได้ที่ปุ่มมุมขวาบน)</p>
-    <button class="btn-primary" id="tvSndOn" style="width:100%">🔊 เปิดเสียง</button>
-    <div class="spacer"></div>
-    <button class="btn-ghost" id="tvSndOff" style="width:100%">🔇 ดูแบบเงียบ</button>
-  </div></div>`);
-  document.body.appendChild(ov);
-  ov.querySelector("#tvSndOn").addEventListener("click",()=>{ tvUnlockSound(); ov.remove(); });
-  ov.querySelector("#tvSndOff").addEventListener("click",()=>{ setMuted(true); ov.remove(); });
+  // แถบเล็กมุมล่าง ไม่บังกระดาน — กระดานโชว์ทันที กดเปิดเสียงเมื่อไหร่ก็ได้ (หรือปล่อยให้หายเอง)
+  if(document.getElementById("tvSndBanner")) return;
+  const b=el(`<div id="tvSndBanner">
+    <span>🔊 กดเพื่อเปิดเสียงบนทีวี</span>
+    <button id="tvSndOn">เปิดเสียง</button>
+    <button id="tvSndOff" title="ดูแบบเงียบ">✕</button>
+  </div>`);
+  document.body.appendChild(b);
+  const close=()=>{ if(b.parentNode) b.remove(); };
+  b.querySelector("#tvSndOn").addEventListener("click",e=>{ e.stopPropagation(); tvUnlockSound(); close(); });
+  b.querySelector("#tvSndOff").addEventListener("click",e=>{ e.stopPropagation(); setMuted(true); close(); });
+  // ซ่อนแถบเองใน 30 วิ ถ้าไม่มีใครกด (กระดานยังโชว์อยู่แล้ว ไม่ค้าง)
+  setTimeout(close, 30000);
 }
 function tvBall(n, b){
   b=b||{}; const def=BALL[n];
