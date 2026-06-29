@@ -3,6 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<!-- กัน browser (โดยเฉพาะเบราว์เซอร์ทีวี) จำหน้าเก่าไว้ ให้ดึงเวอร์ชันล่าสุดเสมอ -->
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>พลู - บันทึกแต้ม</title>
 <style>
   :root{
@@ -1144,8 +1148,8 @@ function renderPlayTab(A){
     </div>`));
   }
 
-  // ปุ่มเปิดโหมดทีวี (เอาขึ้นจอใหญ่เป็นผู้ชม)
-  const tvUrl=location.origin+location.pathname+"?tv=1";
+  // ปุ่มเปิดโหมดทีวี (เอาขึ้นจอใหญ่เป็นผู้ชม) — เติมเลขเวอร์ชันกัน cache บนเบราว์เซอร์ทีวี
+  const tvUrl=location.origin+location.pathname+"?tv=1&v="+Date.now();
   const tvCard=el(`<div class="card"><h2>📺 โหมดทีวี</h2>
     <div class="hint">เปิดลิงก์นี้บนเบราว์เซอร์ของทีวี แล้วเล่น/อัพสกอร์จากมือถือ — ทีวีจะโชว์กระดานสดและอันดับ (เลขลับของแต่ละคนไม่แสดง)</div>
     <div class="spacer"></div>
