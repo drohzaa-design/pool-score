@@ -8,6 +8,27 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <title>พลู - บันทึกแต้ม</title>
+<script>
+/* ตัวดักจับ error โชว์บนจอ (โดยเฉพาะทีวีที่เปิด console ไม่ได้) — ES5 ล้วน ปลอดภัยกับบราวเซอร์เก่า */
+(function(){
+  function paint(msg){
+    try{
+      var d=document.getElementById("__err");
+      if(!d){ d=document.createElement("div"); d.id="__err";
+        d.style.cssText="position:fixed;left:0;top:0;right:0;z-index:2147483647;background:#b00020;color:#fff;font:13px/1.4 monospace;padding:10px;white-space:pre-wrap;max-height:70vh;overflow:auto";
+        (document.body||document.documentElement).appendChild(d);
+      }
+      d.appendChild(document.createTextNode(msg+"\n"));
+    }catch(_){}
+  }
+  window.addEventListener("error",function(e){
+    paint("ERR: "+((e&&e.message)||(e&&e.error&&e.error.message)||"unknown")+"  @"+((e&&e.filename)||"")+":"+((e&&e.lineno)||"")+":"+((e&&e.colno)||""));
+  });
+  window.addEventListener("unhandledrejection",function(e){
+    var r=e&&e.reason; paint("REJECT: "+((r&&(r.message||r.stack))||r||"unknown"));
+  });
+})();
+</script>
 <style>
   :root{
     --bg:#0f1720; --card:#172230; --card2:#1f2d3d; --line:#2b3a4d;
@@ -1383,7 +1404,7 @@ function hofDetail(h){
   const avg=h.played?(h.totalNet/h.played):0;
   return `<div style="padding:8px 0;line-height:1.9;font-size:13px">
     เฉลี่ย/ตา: <b class="${avg>0?'pos':avg<0?'neg':''}">${avg>0?'+':''}${avg.toFixed(2)}</b><br>
-    ตาดีสุด: <b class="pos">+${h.bestRound??0}</b> · ตาแย่สุด: <b class="neg">${h.worstRound??0}</b><br>
+    ตาดีสุด: <b class="pos">+${h.bestRound!=null?h.bestRound:0}</b> · ตาแย่สุด: <b class="neg">${h.worstRound!=null?h.worstRound:0}</b><br>
     🔥 ชนะติดกันสูงสุด: <b>${h.bestStreak}</b> (ปัจจุบัน ${h.curStreak})<br>
     🎯 ยิงเลขตัวเอง: <b>${h.ownPots}</b> · 🥷 แย่งคนอื่น: <b>${h.stealPots}</b><br>
     ⭐ แต้มพิเศษ: <b>${h.specialPots}</b> · 🫥 ลูกหลอก: <b>${h.decoyPots}</b> · 🪙 ลูกเหลือ: <b>${h.leftoverWins}</b><br>
