@@ -678,7 +678,7 @@ async function applyRemoteGame(g){
         newLog.slice(oldLog.length).forEach(line=>{
           const r=tvSoundFromLine(line); if(!r) return;
           if(r.sfx) sfx(r.sfx);
-          if(r.say) speak(r.say);
+          sayNaa(r.kind, r.say);
         });
       }
     }catch(e){}
@@ -864,6 +864,7 @@ function tvUnlockSound(){
     if(_audioCtx.state==="suspended") _audioCtx.resume();
   }catch(e){}
   try{ if(typeof speechSynthesis!=="undefined"){ speechSynthesis.resume(); pickThaiVoice(); } }catch(e){}
+  primeNaaAudio();
   _muted=false; _tvSoundOn=true;
   const mb=document.getElementById("muteBtn"); if(mb){ mb.textContent="🔊"; mb.classList.remove("off"); }
   sfx("own");   // เสียงทดสอบยืนยันว่าเปิดได้
@@ -872,15 +873,15 @@ function tvUnlockSound(){
 function tvSoundFromLine(line){
   if(line.indexOf("[ลูกเหลือ]")===0) return null;                 // เป็นรายละเอียดของโบนัส ข้าม
   if(line.indexOf("แจกแต้มเลขที่เหลือ")>=0) return {sfx:"bonus"};   // หัวข้อโบนัสลูกเหลือ
-  let s=null;
-  if(line.indexOf("ลูกขาว")>=0) s="scratch";
-  else if(line.indexOf("ยิงพลาด")>=0) s=null;                     // พลาด: ไม่มีเอฟเฟกต์ (พูดอย่างเดียว)
-  else if(line.indexOf("แต้มพิเศษ")>=0) s="special";
-  else if(line.indexOf("เลขของตัวเอง")>=0) s="own";
-  else if(line.indexOf("ลูกหลอก")>=0) s="decoy";
-  else if(line.indexOf("เลขของ")>=0) s="steal";                   // ต้องเช็คหลัง "เลขของตัวเอง"
+  let s=null, kind=null;
+  if(line.indexOf("ลูกขาว")>=0){ s="scratch"; kind="scratch"; }
+  else if(line.indexOf("ยิงพลาด")>=0){ s=null; kind="miss"; }    // พลาด: ไม่มีเอฟเฟกต์ tone (มีคลิป+พูด)
+  else if(line.indexOf("แต้มพิเศษ")>=0){ s="special"; kind="special"; }
+  else if(line.indexOf("เลขของตัวเอง")>=0){ s="own"; kind="own"; }
+  else if(line.indexOf("ลูกหลอก")>=0){ s="decoy"; kind="decoy"; }
+  else if(line.indexOf("เลขของ")>=0){ s="steal"; kind="steal"; } // ต้องเช็คหลัง "เลขของตัวเอง"
   const say=line.replace(/[\[\]⭐🫥⚪→=•·—]/g," ").replace(/\s+/g," ").trim();
-  return {sfx:s, say};
+  return {sfx:s, say, kind};
 }
 function tvPlaySounds(live){
   if(!_tvSoundOn) return;
@@ -891,7 +892,7 @@ function tvPlaySounds(live){
     log.slice(_tvPrevLog.length).forEach(line=>{
       const r=tvSoundFromLine(line); if(!r) return;
       if(r.sfx) sfx(r.sfx);
-      if(r.say) speak(r.say);
+      sayNaa(r.kind, r.say);
     });
   }
   if(phase==="result" && _tvPrevPhase!=="result") sfx("end");
@@ -1099,6 +1100,42 @@ function sfx(name){
     if(_audioCtx.state==="suspended") _audioCtx.resume();
     (SFX[name]||function(){})();
   }catch(e){}
+}
+/* ---- คลิปเสียงน้าค่อม: เล่นก่อนเสียงพูด แยกตามเหตุการณ์ ---- */
+const NAA_CLIPS={ special:[1], own:[2,6,7], steal:[5,9,10], decoy:[4,11], miss:[3], scratch:[8] };
+const _naaCache={};
+function _naaAudio(id){
+  let a=_naaCache[id];
+  if(!a){ a=new Audio("sfx/naacom_"+("0"+id).slice(-2)+".mp3"); a.preload="auto"; _naaCache[id]=a; }
+  return a;
+}
+/* ปลดล็อกให้เล่นคลิปได้ (เรียกตอนมี user-gesture ครั้งแรก) */
+function primeNaaAudio(){
+  try{
+    const a=_naaAudio(1); a.muted=true;
+    const p=a.play();
+    if(p&&p.then) p.then(function(){ try{a.pause();a.currentTime=0;}catch(e){} a.muted=false; }).catch(function(){ a.muted=false; });
+    else { try{a.pause();}catch(e){} a.muted=false; }
+  }catch(e){}
+}
+/* เล่นคลิปน้าค่อมตามเหตุการณ์ แล้วเรียก cb เมื่อจบ (ไม่มีคลิป/ปิดเสียง = เรียก cb ทันที) */
+function playNaaClip(kind, cb){
+  const ids=NAA_CLIPS[kind];
+  if(_muted || !ids || !ids.length){ if(cb) cb(); return; }
+  let done=false; const fin=function(){ if(done) return; done=true; if(cb) cb(); };
+  try{
+    const id=ids[Math.floor(Math.random()*ids.length)];
+    const a=_naaAudio(id);
+    try{ a.pause(); a.currentTime=0; }catch(e){}
+    a.onended=fin; a.onerror=fin;
+    const p=a.play();
+    if(p&&p.catch) p.catch(function(){ fin(); });
+    setTimeout(fin, 6000);   // กันค้างถ้า ended ไม่ยิง
+  }catch(e){ fin(); }
+}
+/* เล่นคลิปน้าค่อมก่อน แล้วค่อยพูดประโยคสรุป */
+function sayNaa(kind, phrase){
+  playNaaClip(kind, function(){ if(phrase) speak(phrase); });
 }
 function showAlarmOverlay(title, msg, btnLabel, onClose){
   const ov=el(`<div class="overlay"><div class="overlay-box">
@@ -1820,7 +1857,7 @@ function renderShoot(){
   A.appendChild(skip);
   skip.querySelector("#skip").addEventListener("click",()=>{
     S._strokeOpen=false;
-    speak(shotPhrase("miss", S.players[sh].name));
+    sayNaa("miss", shotPhrase("miss", S.players[sh].name));
     S.actions.push({miss:true, by:sh});
     S.log.push(`[${S.players[sh].name}] ยิงพลาด`);
     S._lastReveal=`${S.players[sh].name} ยิงพลาด → เปลี่ยนคน`;
@@ -1829,7 +1866,7 @@ function renderShoot(){
   skip.querySelector("#scratch").addEventListener("click",()=>{
     const shooterName=S.players[sh].name;
     sfx("scratch");
-    speak(shotPhrase("scratch", shooterName, "", S.players[sh].hc));
+    sayNaa("scratch", shotPhrase("scratch", shooterName, "", S.players[sh].hc));
     S._strokeOpen=false;
     const msg=applyScratch(sh);
     S.actions.push({scratch:true, by:sh});
@@ -1963,7 +2000,7 @@ function shootBall(n){
   const shooterName=S.players[sh].name;
   const ownerName = kind==="steal" ? S.players[b.owner].name : "";
   sfx(kind);
-  speak(shotPhrase(kind, shooterName, ownerName, S.players[sh].hc));
+  sayNaa(kind, shotPhrase(kind, shooterName, ownerName, S.players[sh].hc));
   const msg=applyPotScore(n, sh);
   const cont = !!S._strokeOpen;            // ลูกนี้ลงพร้อมครั้งก่อน (ต่อจากลูกที่แล้วในการยิงครั้งเดียว)
   S.actions.push({n, by:sh, sameStroke:cont});
@@ -2179,7 +2216,7 @@ function renderEndReview(){
       S.actions.pop(); rebuildState(); renderEndReview();
     } else {
       sfx("scratch");
-      speak(shotPhrase("scratch", lbName, "", S.players[lastBy].hc));
+      sayNaa("scratch", shotPhrase("scratch", lbName, "", S.players[lastBy].hc));
       S.actions.push({scratch:true, by:lastBy});
       rebuildState(); renderEndReview();
     }
@@ -2403,6 +2440,7 @@ function unlockAudioOnce(){
     o.start(); o.stop(_audioCtx.currentTime+0.02);
   }catch(e){}
   try{ if(typeof speechSynthesis!=="undefined"){ speechSynthesis.resume(); pickThaiVoice(); } }catch(e){}
+  primeNaaAudio();
   if(_audioCtx && _audioCtx.state==="running") _audioUnlocked=true;   // ปลดล็อกสำเร็จแล้วค่อยเลิกพยายาม
 }
 ["pointerdown","touchend","click","keydown"].forEach(ev=>{
