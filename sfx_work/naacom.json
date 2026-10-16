@@ -1,0 +1,153 @@
+{
+	"systeminfo": "WHISPER : COREML = 0 | OPENVINO = 0 | MTL : EMBED_LIBRARY = 1 | CPU : NEON = 1 | ARM_FMA = 1 | DOTPROD = 1 | ACCELERATE = 1 | OPENMP = 1 | REPACK = 1 | ",
+	"model": {
+		"type": "large",
+		"multilingual": true,
+		"vocab": 51866,
+		"audio": {
+			"ctx": 1500,
+			"state": 1280,
+			"head": 20,
+			"layer": 32
+		},
+		"text": {
+			"ctx": 448,
+			"state": 1280,
+			"head": 20,
+			"layer": 4
+		},
+		"mels": 128,
+		"ftype": 1
+	},
+	"params": {
+		"model": "sfx_work/models/ggml-large-v3-turbo.bin",
+		"language": "th",
+		"translate": false
+	},
+	"result": {
+		"language": "th"
+	},
+	"transcription": [
+		{
+			"timestamps": {
+				"from": "00:00:00,000",
+				"to": "00:00:02,960"
+			},
+			"offsets": {
+				"from": 0,
+				"to": 2960
+			},
+			"text": "พี่บอกตรงตรงนี่มันทางของพี่ชัดชัด"
+		},
+		{
+			"timestamps": {
+				"from": "00:00:02,960",
+				"to": "00:00:05,760"
+			},
+			"offsets": {
+				"from": 2960,
+				"to": 5760
+			},
+			"text": "พี่บอกแล้วไงว่าของพี่กำลังขึ้น"
+		},
+		{
+			"timestamps": {
+				"from": "00:00:05,760",
+				"to": "00:00:09,200"
+			},
+			"offsets": {
+				"from": 5760,
+				"to": 9200
+			},
+			"text": "พี่ไม่ได้แพ้ แต่พี่ออมให้"
+		},
+		{
+			"timestamps": {
+				"from": "00:00:09,200",
+				"to": "00:00:11,160"
+			},
+			"offsets": {
+				"from": 9200,
+				"to": 11160
+			},
+			"text": "อย่าธิฟ้าไอ้น้อง"
+		},
+		{
+			"timestamps": {
+				"from": "00:00:11,160",
+				"to": "00:00:14,280"
+			},
+			"offsets": {
+				"from": 11160,
+				"to": 14280
+			},
+			"text": "ฮะฮะ เด็กๆไปไอ้น้อง"
+		},
+		{
+			"timestamps": {
+				"from": "00:00:14,280",
+				"to": "00:00:16,920"
+			},
+			"offsets": {
+				"from": 14280,
+				"to": 16920
+			},
+			"text": "ถ้าเองรู้ว่ากูเป็นใครแล้วเองจะหนาว"
+		},
+		{
+			"timestamps": {
+				"from": "00:00:16,920",
+				"to": "00:00:20,360"
+			},
+			"offsets": {
+				"from": 16920,
+				"to": 20360
+			},
+			"text": "ฮะฮะฮะ ไม่ได้แดกกูหรอก"
+		},
+		{
+			"timestamps": {
+				"from": "00:00:20,360",
+				"to": "00:00:23,600"
+			},
+			"offsets": {
+				"from": 20360,
+				"to": 23600
+			},
+			"text": "ทุ๊ย บ้า กูนึกว่าเจ๋ง"
+		},
+		{
+			"timestamps": {
+				"from": "00:00:23,600",
+				"to": "00:00:26,400"
+			},
+			"offsets": {
+				"from": 23600,
+				"to": 26400
+			},
+			"text": "ดอกเนี่ยไม่อยู่ เฮ้ย ขออีกสักดอกแล้วกัน"
+		},
+		{
+			"timestamps": {
+				"from": "00:00:26,400",
+				"to": "00:00:29,600"
+			},
+			"offsets": {
+				"from": 26400,
+				"to": 29600
+			},
+			"text": "นิ่มขนาดเนี่ย มันคนลึกฮีกันวะ"
+		},
+		{
+			"timestamps": {
+				"from": "00:00:29,600",
+				"to": "00:00:31,500"
+			},
+			"offsets": {
+				"from": 29600,
+				"to": 31500
+			},
+			"text": "อืม ไอ้นี่กะตีจังเลย"
+		}
+	]
+}

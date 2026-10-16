@@ -1,0 +1,8 @@
+# macOS
+.DS_Store
+
+# Claude Code
+.claude/
+
+# ไฟล์โมเดลขนาดใหญ่ (whisper) — ไม่เก็บเข้า git
+sfx_work/models/
