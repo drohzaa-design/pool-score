@@ -73,7 +73,7 @@
   .ball .num{position:relative;z-index:3;width:54%;height:54%;border-radius:50%;background:#fff;color:#111;
     display:flex;align-items:center;justify-content:center;font-weight:800;font-size:15px;box-shadow:0 1px 2px rgba(0,0,0,.3)}
   .reveal-balls{display:flex;flex-wrap:wrap;gap:14px;justify-content:center;margin:10px 0}
-  .reveal-balls .ball{width:72px;height:72px;cursor:default}
+  .reveal-balls .ball{width:72px;height:72px;flex:0 0 auto;cursor:default}
   .reveal-balls .ball .num{font-size:26px}
   .ball.shot{opacity:.3;cursor:default}
   .ball.shot .num{text-decoration:line-through}
@@ -916,7 +916,7 @@ function renderTV(data){
 
   if(isLive){
     const order=(live.order||[]).map(nm=>nm===live.shooter?`<b style="color:var(--accent)">${esc(nm)}</b>`:esc(nm)).join(" → ");
-    const calledLine=live.calledBall?`<div class="muted" style="color:var(--gold);font-weight:800;margin-top:4px">🎯 ต้องยิงลูก ${live.calledBall}</div>`:"";
+    const calledLine=live.calledBall?`<div style="color:var(--gold);font-weight:800;margin-top:8px;font-size:22px">🎯 ต้องยิงลูกนี้</div><div class="reveal-balls" style="margin:6px 0 2px">${tvBall(live.calledBall,{},live.calledBall)}</div>`:"";
     left.appendChild(el(`<div class="card center tv-banner">
       <div class="muted">${live.streak>0?'🔥 ยิงต่อ!':'ถึงตาของ'}</div>
       <div class="tv-name">${esc(live.shooter||'-')}</div>
