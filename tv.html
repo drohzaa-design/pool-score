@@ -80,6 +80,8 @@
   .ball.special{outline:3px solid var(--gold);outline-offset:-3px}
   .ball.owned-rev{outline:3px solid var(--accent);outline-offset:-3px}
   .ball.decoy-rev{outline:3px solid var(--muted);outline-offset:-3px}
+  .ball.called{outline:4px solid var(--gold);outline-offset:-4px;animation:calledPulse 1.1s ease-in-out infinite}
+  @keyframes calledPulse{0%,100%{box-shadow:0 0 0 0 rgba(234,179,8,.65)}50%{box-shadow:0 0 0 9px rgba(234,179,8,0)}}
   .lo-banner{border:1px solid var(--gold);background:linear-gradient(180deg,rgba(234,179,8,.18),rgba(234,179,8,.06))}
   .lo-banner .t{font-weight:800;color:var(--gold)}
   .lo-ov{animation:loFade .4s ease-out;background:radial-gradient(circle at 50% 38%,rgba(234,179,8,.28),rgba(0,0,0,.9) 70%)}
@@ -576,6 +578,8 @@ function buildLiveSnapshot(){
     order:t.sh!=null ? (S.order&&S.order.length===S.P?S.order:S.players.map((_,i)=>i)).map(i=>S.players[i].name) : [],
     shooter:(S.players[t.sh]?S.players[t.sh].name:null),
     streak:t.streak,
+    mode:S.mode||"classic",
+    calledBall:(S.mode==="random" && S.calledBall && !S.balls[S.calledBall].shot) ? S.calledBall : null,
     balls, leftoverDone:!!S.leftoverDone,
     remaining:Object.values(S.balls).filter(b=>!b.shot).length,
     log:(S.log||[]).slice()   // บันทึกการยิง (อ้างถึงลูกที่ยิงลงแล้ว = เปิดเผยได้)
@@ -811,10 +815,11 @@ function tvSoundGate(){
   // ซ่อนแถบเองใน 30 วิ ถ้าไม่มีใครกด (กระดานยังโชว์อยู่แล้ว ไม่ค้าง)
   setTimeout(close, 30000);
 }
-function tvBall(n, b){
+function tvBall(n, b, called){
   b=b||{}; const def=BALL[n];
   let cls="ball"+(def.t==="st"?" stripe":"");
   if(b.shot){ cls+=" shot"; if(b.type==="owned") cls+=" owned-rev"; else if(b.type==="decoy") cls+=" decoy-rev"; if(b.type==="special") cls+=" special"; }
+  else if(called && n===called){ cls+=" called"; }
   const style=def.t==="st"?"":`background:${def.c}`;
   const inner=(def.t==="st"?`<div class="band" style="background:${def.c}"></div>`:"")+`<div class="shine"></div><div class="num">${n}</div>`;
   return `<div class="${cls}" style="${style}">${inner}</div>`;
@@ -874,7 +879,8 @@ function tvSoundFromLine(line){
   if(line.indexOf("[ลูกเหลือ]")===0) return null;                 // เป็นรายละเอียดของโบนัส ข้าม
   if(line.indexOf("แจกแต้มเลขที่เหลือ")>=0) return {sfx:"bonus"};   // หัวข้อโบนัสลูกเหลือ
   let s=null, kind=null;
-  if(line.indexOf("ลูกขาว")>=0){ s="scratch"; kind="scratch"; }
+  if(line.indexOf("ผิดลูก")>=0){ s="scratch"; kind="wrong"; }
+  else if(line.indexOf("ลูกขาว")>=0){ s="scratch"; kind="scratch"; }
   else if(line.indexOf("ยิงพลาด")>=0){ s=null; kind="miss"; }    // พลาด: ไม่มีเอฟเฟกต์ tone (มีคลิป+พูด)
   else if(line.indexOf("แต้มพิเศษ")>=0){ s="special"; kind="special"; }
   else if(line.indexOf("เลขของตัวเอง")>=0){ s="own"; kind="own"; }
@@ -910,13 +916,15 @@ function renderTV(data){
 
   if(isLive){
     const order=(live.order||[]).map(nm=>nm===live.shooter?`<b style="color:var(--accent)">${esc(nm)}</b>`:esc(nm)).join(" → ");
+    const calledLine=live.calledBall?`<div class="muted" style="color:var(--gold);font-weight:800;margin-top:4px">🎯 ต้องยิงลูก ${live.calledBall}</div>`:"";
     left.appendChild(el(`<div class="card center tv-banner">
       <div class="muted">${live.streak>0?'🔥 ยิงต่อ!':'ถึงตาของ'}</div>
       <div class="tv-name">${esc(live.shooter||'-')}</div>
+      ${calledLine}
       <div class="muted tv-order">ลำดับ: ${order}</div></div>`));
     const bc=el(`<div class="card tv-board"><h2>ลูกบนโต๊ะ <span class="pill">เหลือ ${live.remaining||0} ลูก</span></h2></div>`);
     let bh=`<div class="grid">`;
-    for(let n=1;n<=15;n++) bh+=tvBall(n,(live.balls||{})[n]);
+    for(let n=1;n<=15;n++) bh+=tvBall(n,(live.balls||{})[n],live.calledBall);
     bh+=`</div>`;
     bc.appendChild(el(bh));
     left.appendChild(bc);
@@ -956,7 +964,7 @@ function tvFitRight(right){
 
 /* ---------------- game state ---------------- */
 let S = null;
-function newGameState(players, cardsPer, contMode, contLimit, dealMode){
+function newGameState(players, cardsPer, contMode, contLimit, dealMode, mode){
   players = players.map(p=>({name:p.name, hc:Object.assign(defaultHC(), p.hc||{})}));
   const P=players.length;
   const ledger=Array.from({length:P},()=>Array(P).fill(0));
@@ -973,8 +981,21 @@ function newGameState(players, cardsPer, contMode, contLimit, dealMode){
     firstShooter:0, order:Array.from({length:P},(_,i)=>i), actions:[],
     contMode:contMode||"unlimited", contLimit:contLimit||1,
     dealMode:dealMode||"manual",
+    mode:mode||"classic",       // "classic" = เลือกลูกยิงเอง · "random" = ระบบสุ่มลูกเป้าให้
+    calledBall:null,            // โหมดสุ่ม: ลูกเป้าที่ต้องยิงตอนนี้
     log:[], finished:false, leftoverDone:false
   };
+}
+/* โหมดสุ่ม: สุ่มลูกเป้าใหม่จากลูกที่ยังอยู่บนโต๊ะ (null ถ้าหมดโต๊ะ) */
+function rollCalledBall(){
+  const rem=Object.values(S.balls).filter(b=>!b.shot).map(b=>b.n);
+  S.calledBall = rem.length ? rem[Math.floor(Math.random()*rem.length)] : null;
+  return S.calledBall;
+}
+/* ให้มีลูกเป้าที่ถูกต้องเสมอ (สุ่มใหม่ถ้ายังไม่มี หรือลูกเป้าเดิมถูกยิงไปแล้ว) */
+function ensureCalledBall(){
+  if(S.mode!=="random") return;
+  if(S.calledBall==null || S.balls[S.calledBall].shot) rollCalledBall();
 }
 function transfer(r,g,amt){
   if(r===g) return;
@@ -1057,6 +1078,7 @@ function shotPhrase(kind, shooterName, ownerName, hc){
     case "steal":   return `${shooterName} ยิงลูกของ ${ownerName} ได้ ${hc.steal} แต้มจาก ${ownerName}`;
     case "special": return `${shooterName} ยิงลูกพิเศษ ได้ ${hc.special} แต้มจากทุกคน`;
     case "scratch": return `${shooterName} ลูกขาวลง เสีย ${hc.scratch} แต้มให้ทุกคน`;
+    case "wrong":   return `${shooterName} ยิงผิดลูก เสีย ${hc.scratch} แต้มให้ทุกคน`;
     case "miss":    return `${shooterName} ยิงพลาด`;
     default:        return `${shooterName} ยิงลูกหลอก ไม่มีแต้ม`;
   }
@@ -1102,7 +1124,7 @@ function sfx(name){
   }catch(e){}
 }
 /* ---- คลิปเสียงน้าค่อม: เล่นก่อนเสียงพูด แยกตามเหตุการณ์ ---- */
-const NAA_CLIPS={ special:[1], own:[2,6,7], steal:[5,9,10], decoy:[4,11], miss:[3], scratch:[8] };
+const NAA_CLIPS={ special:[1], own:[2,6,7], steal:[5,9,10], decoy:[4,11], miss:[3], scratch:[8], wrong:[8] };
 const _naaCache={};
 function _naaAudio(id){
   let a=_naaCache[id];
@@ -1169,6 +1191,7 @@ let setupCards=3;
 let setupContMode="unlimited"; // "unlimited" | "limited"
 let setupContLimit=3;          // max consecutive pots when limited
 let setupDealMode="random";    // "random" = ระบบสุ่มแจกเลข · "manual" = กรอกเลขเอง
+let setupMode="classic";       // "classic" = เลือกลูกยิงเอง · "random" = ระบบสุ่มลูกเป้าให้ยิง
 let setupHC={};                // ต่อให้รายคน keyed by name -> {own,special,steal,scratch,contLimit}
 let hcOpen=new Set();          // ชื่อที่กางแผง "ต่อให้" อยู่
 
@@ -1223,8 +1246,28 @@ function renderPlayTab(A){
     try{ navigator.clipboard.writeText(tvUrl); }catch(e){ try{document.execCommand("copy");}catch(_){} }
     const b=tvCard.querySelector("#tvCopy"); const o=b.textContent; b.textContent="คัดลอกแล้ว ✓"; setTimeout(()=>b.textContent=o,1500);
   });
+  const c2m=el(`<div class="card">
+    <h2>1. 🎮 โหมดเล่น</h2>
+    <div class="seg" id="modeSeg">
+      <button data-m="classic">🎱 เลือกลูกยิงเอง</button>
+      <button data-m="random">🎯 ระบบสุ่มลูกยิง</button>
+    </div>
+    <div class="hint" id="modeHint"></div>
+  </div>`);
+  A.appendChild(c2m);
+  const modeSeg=c2m.querySelector("#modeSeg");
+  const modeHint=c2m.querySelector("#modeHint");
+  function paintMode(){
+    modeSeg.querySelectorAll("button").forEach(b=>b.classList.toggle("on",b.dataset.m===setupMode));
+    modeHint.textContent = setupMode==="random"
+      ? "ยังแจกเลขลับเหมือนเดิม แต่ทุกตาระบบจะสุ่มล็อกลูกที่ต้องยิง — ห้ามโดนลูกอื่นลง ถ้าทำลูกอื่นลงจะเสียแต้มเท่าลูกขาวแล้วเปลี่ยนคน"
+      : "เลือกลูกที่จะยิงเองได้อิสระ (กติกาเลขลับปกติ)";
+  }
+  modeSeg.querySelectorAll("button").forEach(b=>b.addEventListener("click",()=>{ setupMode=b.dataset.m; paintMode(); }));
+  paintMode();
+
   const c1=el(`<div class="card"></div>`);
-  c1.innerHTML=`<h2>1. ผู้เล่น <span class="pill" id="cnt"></span></h2>
+  c1.innerHTML=`<h2>2. ผู้เล่น <span class="pill" id="cnt"></span></h2>
     <div class="hint">แตะเพื่อเลือกเข้าตานี้ (ลำดับการเลือก = ลำดับการกรอกไพ่)</div>
     <div class="spacer"></div>
     <div class="row" id="chips"></div>
@@ -1265,7 +1308,7 @@ function renderPlayTab(A){
   c1.querySelector("#newName").addEventListener("keydown",e=>{ if(e.key==="Enter") c1.querySelector("#addName").click(); });
 
   const c2=el(`<div class="card">
-    <h2>2. หยิบไพ่คนละกี่ใบ</h2>
+    <h2>3. หยิบไพ่คนละกี่ใบ</h2>
     <input type="number" id="cards" min="1" max="13" value="${setupCards}">
     <div class="hint">เลขที่แจกมาจาก 1–13 รวมทุกคนต้องไม่เกิน 13 ใบ</div>
   </div>`);
@@ -1273,7 +1316,7 @@ function renderPlayTab(A){
   c2.querySelector("#cards").addEventListener("input",e=>setupCards=parseInt(e.target.value)||0);
 
   const c2d=el(`<div class="card">
-    <h2>3. วิธีแจกเลข</h2>
+    <h2>4. วิธีแจกเลข</h2>
     <div class="seg" id="dealSeg">
       <button data-m="random">🎲 ระบบสุ่มแจก</button>
       <button data-m="manual">✍️ กรอกเลขเอง</button>
@@ -1293,7 +1336,7 @@ function renderPlayTab(A){
   paintDeal();
 
   const c2b=el(`<div class="card">
-    <h2>4. ยิงลงแล้วได้ยิงต่อ?</h2>
+    <h2>5. ยิงลงแล้วได้ยิงต่อ?</h2>
     <div class="seg" id="contSeg">
       <button data-m="unlimited">ไม่จำกัด</button>
       <button data-m="limited">จำกัดจำนวนติดกัน</button>
@@ -1315,7 +1358,7 @@ function renderPlayTab(A){
   paintCont();
 
   const c2c=el(`<div class="card">
-    <h2>5. ต่อให้รายคน <span class="pill">ไม่ตั้งก็ได้</span></h2>
+    <h2>6. ต่อให้รายคน <span class="pill">ไม่ตั้งก็ได้</span></h2>
     <div class="hint">ปรับแต้ม/กติกาเฉพาะบางคน เช่น คนเก่งยิงแย่งเลขได้น้อยลง หรือยิงติดกันได้จำกัด · ทุกแต้มยึดค่าของคนยิง</div>
     <div id="hcBox" style="margin-top:10px"></div>
   </div>`);
@@ -1336,7 +1379,7 @@ function renderPlayTab(A){
     if(total>13){ err.textContent=`รวม ${total} ใบ เกิน 13 (ลดจำนวนคนหรือไพ่ต่อคน)`; return; }
     if(setupContMode==="limited" && (!setupContLimit||setupContLimit<1)){ err.textContent="กรอกจำนวนยิงติดกันสูงสุด"; return; }
     await startCloudGame();   // สร้างกุญแจ/รหัสตา ก่อนเริ่ม เพื่อให้เพื่อนมาช่วยคุมได้
-    S=newGameState(setupSelected.map(n=>({name:n, hc:setupHC[n]})), setupCards, setupContMode, setupContLimit, setupDealMode);
+    S=newGameState(setupSelected.map(n=>({name:n, hc:setupHC[n]})), setupCards, setupContMode, setupContLimit, setupDealMode, setupMode);
     if(S.dealMode==="random") dealHands();
     renderEntry();
   });
@@ -1721,7 +1764,7 @@ function turnState(){
   let pos=0, streak=0; // streak = จำนวน "ครั้งที่ยิง" ติดกัน (1 ครั้งอาจลงหลายลูก) · เดินตามลำดับที่สุ่มไว้
   for(let idx=0; idx<acts.length; idx++){
     const a=acts[idx];
-    if(a.miss||a.scratch){ pos=(pos+1)%P; streak=0; continue; }
+    if(a.miss||a.scratch||a.wrong){ pos=(pos+1)%P; streak=0; continue; }
     // ลูกที่ลงพร้อมครั้งก่อน (sameStroke) ไม่เพิ่มจำนวนครั้ง — นับรวมเป็นการยิงครั้งเดียว
     if(!a.sameStroke) streak++;
     const next=acts[idx+1];
@@ -1766,6 +1809,7 @@ function revealMyNumbers(sh){
 
 function renderShoot(){
   const A=app(); A.innerHTML="";
+  if(S.mode==="random" && !_applyingGame) ensureCalledBall();   // ให้มีลูกเป้าเสมอ (เฉพาะเครื่องคนคุม ไม่ใช่ตอนรับสถานะรีโมต)
   syncLive(); syncGame();
   const {sh, streak, pos}=turnState();
 
@@ -1788,6 +1832,17 @@ function renderShoot(){
     <div class="muted" style="margin-top:6px;font-size:12px">ลำดับ: ${orderStr}</div>
   </div>`);
   A.appendChild(turn);
+
+  // โหมดสุ่ม: โชว์ลูกเป้าที่ต้องยิง (ห้ามโดนลูกอื่นลง)
+  if(S.mode==="random" && S.calledBall){
+    const cb=S.calledBall;
+    const tcard=el(`<div class="card center" style="border-color:var(--gold);background:linear-gradient(180deg,rgba(234,179,8,.14),rgba(234,179,8,.03))">
+      <div style="font-weight:800;color:var(--gold)">🎯 ต้องยิงลูกนี้</div>
+      <div class="reveal-balls" style="justify-content:center;margin:8px 0">${ballHTML(cb,"called")}</div>
+      <div class="muted" style="font-size:12px">ถ้าทำลูกอื่นลง เสีย ${S.players[sh].hc.scratch} แต้มให้ทุกคน แล้วเปลี่ยนคน</div>
+    </div>`);
+    A.appendChild(tcard);
+  }
 
   // ปุ่มดูเลขของตัวเอง — เฉพาะคนที่ถึงตายิงเท่านั้น (คนอื่นดูไม่ได้)
   {
@@ -1838,6 +1893,8 @@ function renderShoot(){
       cls+=" shot";
       if(b.type==="owned") cls+=" owned-rev";
       else if(b.type==="decoy") cls+=" decoy-rev";
+    } else if(S.mode==="random" && n===S.calledBall){
+      cls+=" called";
     }
     const style=def.t==="st"?"":`background:${def.c}`;
     const inner=(def.t==="st"?`<div class="band" style="background:${def.c}"></div>`:"")
@@ -1861,6 +1918,7 @@ function renderShoot(){
     S.actions.push({miss:true, by:sh});
     S.log.push(`[${S.players[sh].name}] ยิงพลาด`);
     S._lastReveal=`${S.players[sh].name} ยิงพลาด → เปลี่ยนคน`;
+    if(S.mode==="random"){ S.actions[S.actions.length-1].called=S.calledBall; rollCalledBall(); }  // เปลี่ยนคน → สุ่มลูกเป้าใหม่
     renderShoot();
   });
   skip.querySelector("#scratch").addEventListener("click",()=>{
@@ -1872,6 +1930,7 @@ function renderShoot(){
     S.actions.push({scratch:true, by:sh});
     S.log.push(`[${shooterName}] ${msg}`);
     S._lastReveal=`${shooterName} ${msg} → เปลี่ยนคน`;
+    if(S.mode==="random"){ S.actions[S.actions.length-1].called=S.calledBall; rollCalledBall(); }  // เปลี่ยนคน → สุ่มลูกเป้าใหม่
     renderShoot();
     showShotPopup({kind:"scratch", shooterName, passed:true, hc:S.players[sh].hc});
   });
@@ -1952,7 +2011,8 @@ function showShotPopup(d, after){
     steal:{cls:"k-steal", icon:"🎯", label:`เลขของ ${esc(d.ownerName)}`, pts:`ได้ ${hc.steal} แต้มจาก ${esc(d.ownerName)}`},
     special:{cls:"k-special", icon:"⭐", label:"ลูกพิเศษ", pts:`ได้ ${hc.special} แต้มจากทุกคน`},
     decoy:{cls:"k-decoy", icon:"🫥", label:"ลูกหลอก", pts:"ไม่มีแต้ม"},
-    scratch:{cls:"k-scratch", icon:"⚪", label:"ลูกขาวลง / ตกโต๊ะ", pts:`เสีย ${hc.scratch} แต้มให้ทุกคน`}
+    scratch:{cls:"k-scratch", icon:"⚪", label:"ลูกขาวลง / ตกโต๊ะ", pts:`เสีย ${hc.scratch} แต้มให้ทุกคน`},
+    wrong:{cls:"k-scratch", icon:"🚫", label:`ยิงผิดลูก! (เป้าคือลูก ${d.calledBall})`, pts:`เสีย ${hc.scratch} แต้มให้ทุกคน`}
   }[d.kind];
   let ballHTML;
   if(d.kind==="scratch"){
@@ -1994,6 +2054,7 @@ function shootBall(n){
   const b=S.balls[n];
   if(b.shot) return;
   const sh=currentShooter();
+  if(S.mode==="random") return shootBallRandom(n, sh);
   const kind = b.type==="special" ? "special"
              : b.type==="owned" ? (b.owner===sh?"own":"steal")
              : "decoy";
@@ -2041,6 +2102,64 @@ function shootBall(n){
     renderShoot();
     showShotPopup({n, kind, shooterName, ownerName, passed:false, hc:S.players[sh].hc}, ()=>{ if(lo) showLeftoverPopup(lo); });
   }
+}
+
+/* โหมดสุ่ม: ยิงลูก n (ระบบล็อกเป้าไว้ที่ S.calledBall) · คิดแต้มเหมือนเดิม แต่บังคับยิงลูกเป้า
+   - ลงลูกเป้า → ได้แต้มตามเจ้าของลูก แล้วยิงต่อได้ตามโควต้า (สุ่มลูกใหม่)
+   - ลงลูกอื่น (ผิดเป้า) → ลูกนั้นเก็บออก ไม่มีใครได้แต้ม + ผู้ยิงเสียเท่าลูกขาว แล้วเปลี่ยนคน
+   - ไม่มีตัวเลือก "ยิงครั้งเดียวลงหลายลูก" (ผลเดียวจบ) */
+function shootBallRandom(n, sh){
+  const b=S.balls[n];
+  const shooterName=S.players[sh].name;
+  const hc=S.players[sh].hc;
+  S._strokeOpen=false;
+  if(n!==S.calledBall){
+    // ผิดเป้า — เก็บลูกออก ไม่มีแต้มจากลูกนี้ + ปรับเท่าลูกขาว
+    const target=S.calledBall;
+    b.shot=true; b.shotBy=sh; b.wrong=true;
+    sfx("scratch");
+    sayNaa("wrong", shotPhrase("wrong", shooterName, "", hc));
+    S.players.forEach((p,j)=>{ if(j!==sh) transfer(j,sh,hc.scratch); });
+    S.actions.push({n, by:sh, wrong:true, called:target});
+    const msg=`ยิงผิดลูก! ลูก ${n} ลง (เป้าคือลูก ${target}) → เสีย ${hc.scratch} แต้มให้ทุกคน`;
+    S.log.push(`[${shooterName}] ${msg}`);
+    S._lastReveal=`${shooterName} ${msg} → เปลี่ยนคน`;
+    const lo=applyLeftover();
+    const ended=maybeAutoEnd();
+    if(ended){
+      S.finished=true;
+      renderEndReview();
+      showShotPopup({kind:"wrong", n, calledBall:target, shooterName, passed:true, hc}, ()=>{ if(lo) showLeftoverPopup(lo); });
+      return;
+    }
+    rollCalledBall();
+    renderShoot();
+    showShotPopup({kind:"wrong", n, calledBall:target, shooterName, passed:true, hc}, ()=>{ if(lo) showLeftoverPopup(lo); });
+    return;
+  }
+  // ลงลูกเป้าถูกต้อง — คิดแต้มตามเดิม
+  const kind = b.type==="special" ? "special"
+             : b.type==="owned" ? (b.owner===sh?"own":"steal")
+             : "decoy";
+  const ownerName = kind==="steal" ? S.players[b.owner].name : "";
+  sfx(kind);
+  sayNaa(kind, shotPhrase(kind, shooterName, ownerName, hc));
+  const msg=applyPotScore(n, sh);
+  S.actions.push({n, by:sh, called:n});
+  S.log.push(`[${shooterName}] ${msg}`);
+  const lo=applyLeftover();
+  const ended=maybeAutoEnd();
+  if(ended){
+    S._lastReveal=msg;
+    renderEndReview();
+    showShotPopup({n, kind, shooterName, ownerName, passed:false, hc}, ()=>{ if(lo) showLeftoverPopup(lo); });
+    return;
+  }
+  rollCalledBall();                       // ยิงต่อ → สุ่มลูกเป้าใหม่
+  const passed = currentShooter()!==sh;   // ครบโควต้ายิงติดกันหรือยัง
+  S._lastReveal = passed ? `${msg} — ครบโควต้ายิงติดกัน เปลี่ยนคน` : msg;
+  renderShoot();
+  showShotPopup({n, kind, shooterName, ownerName, passed, hc}, ()=>{ if(lo) showLeftoverPopup(lo); });
 }
 
 /* แจกโบนัสลูกเหลือ: เมื่อลูกหลอกหมดโต๊ะแล้ว และลูกของผู้เล่นเหลือไม่เกินจำนวนไพ่
@@ -2127,8 +2246,13 @@ function undoLast(){
   if(!S.actions.length) return;
   sfx("undo");
   S._strokeOpen=false;
-  S.actions.pop();
+  const popped=S.actions.pop();
   rebuildState();
+  // โหมดสุ่ม: คืนลูกเป้าที่ค้างอยู่ตอนทำการกระทำที่เพิ่งยกเลิก
+  if(S.mode==="random"){
+    if(popped && popped.called && !S.balls[popped.called].shot) S.calledBall=popped.called;
+    else ensureCalledBall();
+  }
   // ย้อนแล้ว: ถ้ายังจบโต๊ะอยู่ -> กลับหน้าตรวจ, ไม่งั้นกลับไปยิงต่อ
   if(isTableFinished()){ S.finished=true; renderEndReview(); }
   else { S.finished=false; S.phase="shoot"; renderShoot(); }
@@ -2137,7 +2261,7 @@ function undoLast(){
 function rebuildState(){
   // reset and replay actions (turn order recomputed from position)
   S.ledger=Array.from({length:S.P},()=>Array(S.P).fill(0));
-  Object.values(S.balls).forEach(b=>{b.shot=false;b.shotBy=null;b.leftover=false;});
+  Object.values(S.balls).forEach(b=>{b.shot=false;b.shotBy=null;b.leftover=false;b.wrong=false;});
   S.log=[]; S._lastReveal=""; S.leftoverDone=false;
   const acts=S.actions.slice(); S.actions=[];
   acts.forEach(a=>{
@@ -2153,6 +2277,14 @@ function rebuildState(){
       const msg=applyScratch(m);
       S.actions.push({scratch:true, by:m});
       S.log.push(`[${S.players[m].name}] ${msg}`);
+    } else if(a.wrong){
+      const m=(a.by!=null)?a.by:sh;
+      const bb=S.balls[a.n]; bb.shot=true; bb.shotBy=m; bb.wrong=true;
+      const scr=S.players[m].hc.scratch;
+      S.players.forEach((p,j)=>{ if(j!==m) transfer(j,m,scr); });
+      S.actions.push({n:a.n, by:m, wrong:true, called:a.called});
+      S.log.push(`[${S.players[m].name}] ยิงผิดลูก! ลูก ${a.n} ลง (เป้าคือลูก ${a.called}) → เสีย ${scr} แต้มให้ทุกคน`);
+      applyLeftover();
     } else {
       const cont=!!a.sameStroke;
       const msg=applyPotScore(a.n, sh);
@@ -2180,7 +2312,7 @@ function renderEndReview(){
   const scratched=!!(last && last.scratch);
   // คนที่ยิงลูกสุดท้าย (ข้ามโทษลูกขาว/พลาดที่ต่อท้าย)
   let lastBy=null;
-  for(let i=acts.length-1;i>=0;i--){ const a=acts[i]; if(!a.scratch && !a.miss){ lastBy=a.by; break; } }
+  for(let i=acts.length-1;i>=0;i--){ const a=acts[i]; if(!a.scratch && !a.miss && !a.wrong){ lastBy=a.by; break; } }
   if(lastBy==null) lastBy = last ? last.by : currentShooter();
   const lbName = S.players[lastBy] ? S.players[lastBy].name : "";
   const sc = S.players[lastBy] ? S.players[lastBy].hc.scratch : UNIT;
@@ -2240,7 +2372,7 @@ function endRound(){
   const tally=S.players.map(()=>({own:0,steal:0,special:0,decoy:0,leftover:0}));
   Object.values(S.balls).forEach(b=>{
     if(b.leftover && b.owner!=null) tally[b.owner].leftover++;
-    if(!b.shot || b.shotBy==null) return;
+    if(!b.shot || b.shotBy==null || b.wrong) return;   // ลูกที่ยิงผิดเป้า ไม่นับเป็นผลงานยิง
     const by=b.shotBy;
     if(b.type==="special") tally[by].special++;
     else if(b.type==="decoy") tally[by].decoy++;
@@ -2253,16 +2385,17 @@ function endRound(){
   S.actions.forEach(a=>{
     if(a.scratch){ if(a.by!=null) scr[a.by]++; runSize=0; runBy=null; return; }
     if(a.miss){ if(a.by!=null) mis[a.by]++; runSize=0; runBy=null; return; }
+    if(a.wrong){ runSize=0; runBy=null; return; }   // ยิงผิดเป้า: ตัดคอมโบ ไม่นับเป็นลูกยิง
     // ยิงลง: ลูกที่ลงพร้อมครั้งก่อน (sameStroke) นับต่อเป็นคอมโบเดียวกัน
     if(a.sameStroke && runBy===a.by){ runSize++; } else { runSize=1; runBy=a.by; }
     if(a.by!=null && runSize>combo[a.by]) combo[a.by]=runSize;
   });
   // นักปิดเกม: คนยิงลูกจริงลูกสุดท้าย (ข้ามฟาวล์/พลาดที่ต่อท้าย)
   let closer=null;
-  for(let i=S.actions.length-1;i>=0;i--){ const a=S.actions[i]; if(!a.scratch && !a.miss){ closer=a.by; break; } }
-  // น้ำตาตกใน: ลูกตัวเองโดนคนอื่นยิง
+  for(let i=S.actions.length-1;i>=0;i--){ const a=S.actions[i]; if(!a.scratch && !a.miss && !a.wrong){ closer=a.by; break; } }
+  // น้ำตาตกใน: ลูกตัวเองโดนคนอื่นยิง (ไม่นับลูกที่โดนยิงผิดเป้า — ไม่มีใครได้แต้ม)
   Object.values(S.balls).forEach(b=>{
-    if(b.shot && b.type==="owned" && b.owner!=null && b.shotBy!=null && b.shotBy!==b.owner) victim[b.owner]++;
+    if(b.shot && !b.wrong && b.type==="owned" && b.owner!=null && b.shotBy!=null && b.shotBy!==b.owner) victim[b.owner]++;
   });
 
   const nets=S.players.map((p,i)=>netOf(i));
@@ -2307,8 +2440,8 @@ let resultTab="round";   // ตานี้ | รวมทั้งรอบ
 /* เริ่มตาใหม่ทันทีด้วยวงเดิม (ผู้เล่น/ต่อให้/ตั้งค่าเดิม) ไม่ต้องกลับไปหน้าตั้งวง */
 function startNextRound(){
   const players=S.players.map(p=>({name:p.name, hc:Object.assign({},p.hc)}));
-  const cardsPer=S.cardsPer, contMode=S.contMode, contLimit=S.contLimit, dealMode=S.dealMode;
-  S=newGameState(players, cardsPer, contMode, contLimit, dealMode);
+  const cardsPer=S.cardsPer, contMode=S.contMode, contLimit=S.contLimit, dealMode=S.dealMode, mode=S.mode;
+  S=newGameState(players, cardsPer, contMode, contLimit, dealMode, mode);
   if(S.dealMode==="random") dealHands();
   entryGateOpen=false;
   renderEntry();
@@ -2318,7 +2451,7 @@ function startNextRound(){
 function editRosterNextRound(){
   setupSelected = S.players.map(p=>p.name);
   S.players.forEach(p=>{ setupHC[p.name]=Object.assign(defaultHC(), p.hc); });
-  setupCards=S.cardsPer; setupContMode=S.contMode; setupContLimit=S.contLimit; setupDealMode=S.dealMode;
+  setupCards=S.cardsPer; setupContMode=S.contMode; setupContLimit=S.contLimit; setupDealMode=S.dealMode; setupMode=S.mode;
   S=null; entryGateOpen=false; clearCloudGame(); homeTab="play"; renderSetup();
 }
 /* รายละเอียดของ "ตานี้" (อันดับ + ใครได้จากใคร + บันทึก) */
