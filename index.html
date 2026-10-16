@@ -1850,7 +1850,6 @@ function renderShoot(){
     revBtn.addEventListener("click",()=>revealMyNumbers(sh));
     A.appendChild(revBtn);
   }
-  { const ib=inviteButton(); if(ib) A.appendChild(ib); }
 
   // โบนัสลูกเหลือ: แบนเนอร์ค้างไว้ให้เห็นชัดจนจบตา
   if(S.leftoverDone){
@@ -1969,6 +1968,9 @@ function renderShoot(){
     A.appendChild(lc);
     lc.querySelector("#log").innerHTML=logHTML(S.log);
   }
+
+  // ให้เพื่อนมาช่วยคุม (สแกน QR) — ไว้ล่างสุด
+  { const ib=inviteButton(); if(ib) A.appendChild(ib); }
 
   // ยกเลิก/โล๊ะตานี้
   { const ac=el(`<div class="card"></div>`); ac.appendChild(abandonButton()); A.appendChild(ac); }
